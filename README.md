@@ -13,14 +13,19 @@ This script automatically syncs MP3 file metadata by:
 
 The script uses the following filename convention:
 ```
-Artist - Album - Song.mp3
+AlbumArtist - Album - Song.mp3
 ```
 
+**Album Artist vs Artist:**
+- **Album Artist** keeps albums together (used in filename)
+- **Artist** is the individual track performer (preserved in metadata)
+- For compilations, Album Artist is typically "Various Artists"
+- For regular albums, Album Artist usually matches the main artist
+
 Examples:
-- `Depeche Mode - Ultra (Deluxe) - It's no good.mp3`
-- `Billy Club Sandwich - Superheroes At Leisure - Sandwiches.mp3`
-- `Damien Rice - O - Cannonball.mp3`
-- `Rock Master Scott & The Dynamic Three - Old School Rap 80s - Old School Rap 80s - The Roof Is On Fire.mp3`
+- `Coldplay - Parachutes - Yellow.mp3` (regular album)
+- `Various Artists - 8 Mile Soundtrack - Lose Yourself.mp3` (compilation)
+- `Linkin Park - Collision Course - Numb_Encore.mp3` (collaboration album)
 
 ## How It Works
 
@@ -30,17 +35,19 @@ Examples:
 - Returns a list of absolute file paths
 
 ### 2. **Filename Parsing** (`parse_filename`)
-- Extracts artist, album, and title from filenames using the `Artist - Album - Song.mp3` format
+- Extracts album artist, album, and title from filenames using the `AlbumArtist - Album - Song.mp3` format
 - Splits the filename on `" - "` (space-dash-space)
-- Returns a dictionary with `artist`, `album`, and `title` keys
-- Falls back to 2-part format (`Artist - Song.mp3`) if album is not present
+- Returns a dictionary with `albumartist`, `album`, and `title` keys
+- Falls back to 2-part format (`AlbumArtist - Song.mp3`) if album is not present
+- The first part is always treated as album artist to keep albums together
 
 ### 3. **Audio Fingerprinting** (`query_acoustid`)
 - Analyzes the actual audio data to identify songs (most accurate method)
 - Uses AcoustID/Chromaprint to generate audio fingerprints
 - Queries the AcoustID database (linked to MusicBrainz)
 - Works even when files have completely wrong or missing metadata
-- Returns artist, title, album, and confidence score
+- Returns artist, album artist, title, album, and confidence score
+- Album artist is extracted from the album/release artist in MusicBrainz
 - Requires `chromaprint` (fpcalc) to be installed
 
 ### 4. **Text-Based Metadata Lookup** (`query_itunes_api`)
@@ -56,8 +63,9 @@ The script originally used MusicBrainz but switched to iTunes API due to SSL/TLS
 This is the main processing function that:
 
 #### Step 1: Fill from Filename
-- If metadata fields (artist/album/title) are missing in the MP3 file
+- If metadata fields (albumartist/album/title) are missing in the MP3 file
 - Attempts to populate them from the parsed filename
+- Also sets artist field if missing, using albumartist as fallback
 
 #### Step 2: Audio Fingerprint Identification
 - If fields are still missing or contain invalid values ("Unknown", "-", empty)
@@ -73,10 +81,13 @@ This is the main processing function that:
 #### Step 4: Save Changes
 - Saves updated metadata to the MP3 file
 
-#### Step 4: Rename File
-- Generates a new filename based on the final metadata: `{artist} - {album} - {title}.mp3`
-- Renames the file if the current name doesn't match- Checks if target file already exists to prevent overwriting
-- Skips rename if metadata is insufficient (no artist and no title)- Uses "Unknown" as fallback for missing values
+#### Step 5: Rename File
+- Generates a new filename based on the final metadata: `{albumartist} - {album} - {title}.mp3`
+- Falls back to `artist` if `albumartist` is not available
+- Renames the file if the current name doesn't match
+- Checks if target file already exists to prevent overwriting
+- Skips rename if metadata is insufficient (no album artist/artist and no title)
+- Uses "not found" to mark metadata that couldn't be identified
 
 ## Technical Details
 
@@ -148,15 +159,15 @@ track01.mp3
 3. **Generate audio fingerprint from the actual audio data**
 4. **Query AcoustID database**
 5. **Match found: "Cannonball" by Damien Rice (97% confidence)**
-6. Query MusicBrainz for album: "O"
-7. Update ID3 tags with all fields
-8. Rename file
+6. Query MusicBrainz for album: "O", album artist: "Damien Rice"
+7. Update ID3 tags with all fields (artist, albumartist, album, title)
+8. Rename file using album artist
 
 ### After:
 ```
 Damien Rice - O - Cannonball.mp3
 ```
-- ID3 tags: Artist = "Damien Rice", Album = "O", Title = "Cannonball"
+- ID3 tags: Artist = "Damien Rice", Album Artist = "Damien Rice", Album = "O", Title = "Cannonball"
 
 ## Limitations
 
@@ -165,11 +176,13 @@ Damien Rice - O - Cannonball.mp3
   - Live recordings or heavily remixed versions may not match
 - Files with generic titles may not find correct matches with text-based search
 - iTunes API may not have all songs, especially rare or independent releases
-- Filename format should follow `Artist - Album - Song.mp3` convention for best results
-  - Falls back to `Artist - Song.mp3` format if only 2 parts detected
+- Filename format uses `AlbumArtist - Album - Song.mp3` convention
+  - Album Artist keeps compilation albums together
+  - Falls back to `AlbumArtist - Song.mp3` format if album is not present
 - Rate limiting: delays between API requests
 - Album information may not always be accurate for compilations or special editions
 - Files will not be renamed if metadata is insufficient to prevent file loss
+- Metadata marked as "not found" indicates unsuccessful lookup through all methods
 
 ## Future Enhancements
 

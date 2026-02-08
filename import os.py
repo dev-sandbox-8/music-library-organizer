@@ -15,13 +15,14 @@ def scan_mp3_files(folder):
     return mp3_files
 
 def parse_filename(filename):
-    # Example: "Artist - Album - Song.mp3"
+    # Example: "AlbumArtist - Album - Song.mp3"
     base = os.path.splitext(os.path.basename(filename))[0]
     parts = base.split(' - ')
     if len(parts) == 3:
-        return {'artist': parts[0], 'album': parts[1], 'title': parts[2]}
+        # Use the first part as albumartist (keeps albums together)
+        return {'albumartist': parts[0], 'album': parts[1], 'title': parts[2]}
     elif len(parts) == 2:
-        return {'artist': parts[0], 'title': parts[1]}
+        return {'albumartist': parts[0], 'title': parts[1]}
     return {}
 
 def query_acoustid(mp3_path):
@@ -36,8 +37,9 @@ def query_acoustid(mp3_path):
         for score, recording_id, title, artist in results:
             # Return the first result with a decent confidence score
             if score > 0.5:  # 50% confidence threshold
-                # Try to get album information
+                # Try to get album and album artist information
                 album = None
+                albumartist = None
                 try:
                     # Query MusicBrainz for more details
                     mb_url = f"https://musicbrainz.org/ws/2/recording/{recording_id}"
@@ -48,12 +50,17 @@ def query_acoustid(mp3_path):
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get('releases') and len(data['releases']) > 0:
-                            album = data['releases'][0].get('title')
+                            release = data['releases'][0]
+                            album = release.get('title')
+                            # Get album artist from release
+                            if release.get('artist-credit'):
+                                albumartist = release['artist-credit'][0]['name']
                 except:
                     pass
                 
                 return {
                     'artist': artist,
+                    'albumartist': albumartist or artist,  # Fall back to track artist
                     'title': title,
                     'album': album,
                     'confidence': score
@@ -101,8 +108,11 @@ def query_itunes_api(artist=None, title=None, album=None):
         data = resp.json()
         if data.get('results') and len(data['results']) > 0:
             result = data['results'][0]
+            artist_name = result.get('artistName')
+            album_artist = result.get('collectionArtistName') or artist_name
             return {
-                'artist': result.get('artistName'),
+                'artist': artist_name,
+                'albumartist': album_artist,
                 'album': result.get('collectionName'),
                 'title': result.get('trackName')
             }
@@ -124,14 +134,19 @@ def sync_metadata_and_rename(mp3_path):
     changed = False
 
     # Fill missing metadata from filename
-    for key in ['artist', 'album', 'title']:
+    for key in ['albumartist', 'album', 'title']:
         if key in filename_info and (key not in audio or not audio[key]):
             audio[key] = filename_info[key]
             changed = True
+    
+    # If albumartist was set but artist wasn't, copy albumartist to artist
+    if 'albumartist' in filename_info and (not audio.get('artist') or not audio['artist'][0]):
+        audio['artist'] = filename_info['albumartist']
+        changed = True
 
     # If still missing, try audio fingerprinting first (most accurate)
     needs_lookup = False
-    for key in ['artist', 'album', 'title']:
+    for key in ['artist', 'albumartist', 'album', 'title']:
         current_value = audio.get(key, [None])[0]
         if not current_value or current_value in ['Unknown', '-', '', ' ']:
             needs_lookup = True
@@ -143,7 +158,7 @@ def sync_metadata_and_rename(mp3_path):
         
         if acoustid_result and '_error' not in acoustid_result:
             # Apply results from audio fingerprinting
-            for key in ['artist', 'album', 'title']:
+            for key in ['artist', 'albumartist', 'album', 'title']:
                 if key in acoustid_result and acoustid_result[key]:
                     current_value = audio.get(key, [None])[0]
                     if not current_value or current_value in ['Unknown', '-', '', ' ']:
@@ -155,7 +170,7 @@ def sync_metadata_and_rename(mp3_path):
             time.sleep(1)  # Be respectful with API rate
     
     # If still missing after fingerprinting, try text-based iTunes lookup
-    for key in ['artist', 'album', 'title']:
+    for key in ['artist', 'albumartist', 'album', 'title']:
         current_value = audio.get(key, [None])[0]
         # Skip if field is present and not generic/invalid
         if current_value and current_value not in ['Unknown', '-', '', ' ']:
@@ -193,33 +208,46 @@ def sync_metadata_and_rename(mp3_path):
         time.sleep(0.5)  # Be respectful with API rate
     
     # Mark any remaining missing/invalid fields as "not found"
-    for key in ['artist', 'album', 'title']:
+    for key in ['artist', 'albumartist', 'album', 'title']:
         current_value = audio.get(key, [None])[0]
         # Check if value is missing or invalid
         if not current_value or current_value in ['Unknown', '-', '', ' ']:
             audio[key] = 'not found'
             changed = True
         # Also check for single digit or double digit numbers (likely track numbers mistakenly set as metadata)
-        elif key in ['artist', 'title'] and current_value and current_value.isdigit() and len(current_value) <= 2:
+        elif key in ['artist', 'albumartist', 'title'] and current_value and current_value.isdigit() and len(current_value) <= 2:
             audio[key] = 'not found'
             changed = True
+    
+    # If albumartist is not found but artist is, use artist as albumartist
+    if audio.get('albumartist', [None])[0] == 'not found' and audio.get('artist', [None])[0] not in ['not found', None]:
+        audio['albumartist'] = audio.get('artist', ['not found'])[0]
+        changed = True
+    # If artist is not found but albumartist is, use albumartist as artist
+    elif audio.get('artist', [None])[0] == 'not found' and audio.get('albumartist', [None])[0] not in ['not found', None]:
+        audio['artist'] = audio.get('albumartist', ['not found'])[0]
+        changed = True
 
     if changed:
         audio.save()
         print(f"Updated metadata for: {mp3_path}")
 
-    # Rename file to match metadata
-    artist = audio.get('artist', ['not found'])[0]
+    # Rename file to match metadata using albumartist (keeps albums together)
+    albumartist = audio.get('albumartist', ['not found'])[0]
+    # Fall back to artist if albumartist is not available
+    if not albumartist or albumartist in ['Unknown', 'not found']:
+        albumartist = audio.get('artist', ['not found'])[0]
+    
     album = audio.get('album', ['not found'])[0]
     title = audio.get('title', ['not found'])[0]
     
     # Skip renaming if all metadata is empty or not found to prevent file loss
-    if not artist or artist in ['Unknown', 'not found']:
+    if not albumartist or albumartist in ['Unknown', 'not found']:
         if not title or title in ['Unknown', 'not found']:
-            print(f"Warning: Skipping rename for {mp3_path} - insufficient metadata (no artist or title)")
+            print(f"Warning: Skipping rename for {mp3_path} - insufficient metadata (no album artist or title)")
             return True
     
-    new_name = f"{artist} - {album} - {title}.mp3"
+    new_name = f"{albumartist} - {album} - {title}.mp3"
     new_path = os.path.join(os.path.dirname(mp3_path), new_name)
 
     if mp3_path != new_path:
