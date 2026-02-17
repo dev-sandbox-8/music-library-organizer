@@ -7,25 +7,52 @@ This script automatically syncs MP3 file metadata by:
 2. **Using audio fingerprinting (AcoustID) to identify songs from their audio data**
 3. Querying online music databases (iTunes API) as fallback for missing metadata
 4. Updating ID3 tags in MP3 files
-5. Renaming files to match the metadata
+5. **Organizing files into a folder structure: `<Artist>/<Album>/<Track Number> - <Track Name>.mp3`**
 
 ## Filename Format
 
-The script uses the following filename convention:
+The script organizes files into a hierarchical folder structure:
 ```
-AlbumArtist - Album - Song.mp3
+<Artist>/<Album>/<Track Number> - <Track Name>.mp3
 ```
 
+Examples:
+```
+Coldplay/
+  Parachutes/
+    01 - Don't Panic.mp3
+    02 - Shiver.mp3
+    03 - Spies.mp3
+    04 - Sparks.mp3
+    05 - Yellow.mp3
+    ...
+
+The Beatles/
+  Abbey Road/
+    01 - Come Together.mp3
+    02 - Something.mp3
+    ...
+```
+
+Track numbers are automatically zero-padded to 2 digits (01, 02, etc.). If a track number is not available, the file is named with just the track title.
+
+### Input Filename Recognition
+
+The script can also parse metadata from input filenames in these formats:
+- `AlbumArtist - Album - Song.mp3`
+- `AlbumArtist - Song.mp3`
+- `TrackNumber - Song.mp3` (e.g., `01 - Yellow.mp3`)
+
 **Album Artist vs Artist:**
-- **Album Artist** keeps albums together (used in filename)
+- **Album Artist** keeps albums together (used for folder organization)
 - **Artist** is the individual track performer (preserved in metadata)
 - For compilations, Album Artist is typically "Various Artists"
 - For regular albums, Album Artist usually matches the main artist
 
 Examples:
-- `Coldplay - Parachutes - Yellow.mp3` (regular album)
-- `Various Artists - 8 Mile Soundtrack - Lose Yourself.mp3` (compilation)
-- `Linkin Park - Collision Course - Numb_Encore.mp3` (collaboration album)
+- `Coldplay/Parachutes/05 - Yellow.mp3` (regular album)
+- `Various Artists/8 Mile Soundtrack/01 - Lose Yourself.mp3` (compilation)
+- `Linkin Park/Collision Course/06 - Numb_Encore.mp3` (collaboration album)
 
 ## How It Works
 
@@ -35,26 +62,30 @@ Examples:
 - Returns a list of absolute file paths
 
 ### 2. **Filename Parsing** (`parse_filename`)
-- Extracts album artist, album, and title from filenames using the `AlbumArtist - Album - Song.mp3` format
+- Extracts metadata from filenames in multiple formats:
+  - `AlbumArtist - Album - Song.mp3` format
+  - `AlbumArtist - Song.mp3` format (when album is not present)
+  - `TrackNumber - Song.mp3` format (e.g., `01 - Yellow.mp3`)
 - Splits the filename on `" - "` (space-dash-space)
-- Returns a dictionary with `albumartist`, `album`, and `title` keys
-- Falls back to 2-part format (`AlbumArtist - Song.mp3`) if album is not present
-- The first part is always treated as album artist to keep albums together
+- Returns a dictionary with `albumartist`, `album`, `title`, and/or `tracknumber` keys
+- The first part is treated as album artist to keep albums together when in 3-part format
 
 ### 3. **Audio Fingerprinting** (`query_acoustid`)
 - Analyzes the actual audio data to identify songs (most accurate method)
 - Uses AcoustID/Chromaprint to generate audio fingerprints
 - Queries the AcoustID database (linked to MusicBrainz)
 - Works even when files have completely wrong or missing metadata
-- Returns artist, album artist, title, album, and confidence score
-- Album artist is extracted from the album/release artist in MusicBrainz
+- Returns artist, album artist, title, album, track number, and confidence score
+- Album artist and track number are extracted from the album/release data in MusicBrainz
 - Requires `chromaprint` (fpcalc) to be installed
 
 ### 4. **Text-Based Metadata Lookup** (`query_itunes_api`)
 - Queries the iTunes Search API when metadata is missing or insufficient
 - Searches using available artist, album, and/or title information
-- Returns the best match from iTunes database including album information
-- Includes a 0.5-second delay to respect API rate limits- Used as fallback when audio fingerprinting doesn't find a match
+- Returns the best match from iTunes database including album and track number information
+- Includes a 0.5-second delay to respect API rate limits
+- Used as fallback when audio fingerprinting doesn't find a match
+
 **Why iTunes API?**
 The script originally used MusicBrainz but switched to iTunes API due to SSL/TLS compatibility issues between the Python SSL library and MusicBrainz servers.
 
@@ -63,7 +94,7 @@ The script originally used MusicBrainz but switched to iTunes API due to SSL/TLS
 This is the main processing function that:
 
 #### Step 1: Fill from Filename
-- If metadata fields (albumartist/album/title) are missing in the MP3 file
+- If metadata fields (albumartist/album/title/tracknumber) are missing in the MP3 file
 - Attempts to populate them from the parsed filename
 - Also sets artist field if missing, using albumartist as fallback
 
@@ -71,22 +102,22 @@ This is the main processing function that:
 - If fields are still missing or contain invalid values ("Unknown", "-", empty)
 - Uses audio fingerprinting to analyze the actual audio data
 - Identifies the song with high accuracy (typically >90% confidence)
-- Updates metadata with results from AcoustID/MusicBrainz
+- Updates metadata with results from AcoustID/MusicBrainz including track numbers
 
 #### Step 3: Text-Based Online Lookup (Fallback)
 - If audio fingerprinting doesn't find a match
 - Queries iTunes API using available text information
-- Updates any remaining missing fields
+- Updates any remaining missing fields including track numbers
 
 #### Step 4: Save Changes
 - Saves updated metadata to the MP3 file
 
-#### Step 5: Rename File
-- Generates a new filename based on the final metadata: `{albumartist} - {album} - {title}.mp3`
-- Falls back to `artist` if `albumartist` is not available
-- Renames the file if the current name doesn't match
-- Checks if target file already exists to prevent overwriting
-- Skips rename if metadata is insufficient (no album artist/artist and no title)
+#### Step 5: Organize into Folder Structure
+- Creates directory structure: `Artist/Album/`
+- Generates new filename: `<Track Number> - <Track Name>.mp3`
+- Track numbers are zero-padded to 2 digits (01, 02, etc.)
+- If no track number available, uses just the track name
+- Moves file to the organized location
 - Uses "not found" to mark metadata that couldn't be identified
 
 ## Technical Details
@@ -163,12 +194,20 @@ The test suite verifies:
 - Filename sanitization
 - Rename operations with logging
 - Rollback capability
+- Folder organization structure
+- Track number formatting
+
+Each test file includes comprehensive documentation describing:
+- What features are being tested
+- Testing approach (unit vs integration)
+- Expected behavior and edge cases
 
 ## Workflow Example
 
 ### Before:
 ```
-track01.mp3
+/Music/
+  track01.mp3
 ```
 - Filename: Generic track name
 - ID3 tags: All empty or corrupted
@@ -179,15 +218,23 @@ track01.mp3
 3. **Generate audio fingerprint from the actual audio data**
 4. **Query AcoustID database**
 5. **Match found: "Cannonball" by Damien Rice (97% confidence)**
-6. Query MusicBrainz for album: "O", album artist: "Damien Rice"
-7. Update ID3 tags with all fields (artist, albumartist, album, title)
-8. Rename file using album artist
+6. Query MusicBrainz for album: "O", album artist: "Damien Rice", track: 2
+7. Update ID3 tags with all fields (artist, albumartist, album, title, tracknumber)
+8. Create folder structure and move file
 
 ### After:
 ```
-Damien Rice - O - Cannonball.mp3
+/Music/
+  Damien Rice/
+    O/
+      01 - Blower's Daughter.mp3
+      02 - Cannonball.mp3
+      03 - Volcano.mp3
+      ...
 ```
-- ID3 tags: Artist = "Damien Rice", Album Artist = "Damien Rice", Album = "O", Title = "Cannonball"
+- Folder: `Damien Rice/O/`
+- Filename: `02 - Cannonball.mp3`
+- ID3 tags: Artist = "Damien Rice", Album Artist = "Damien Rice", Album = "O", Title = "Cannonball", Track = "2"
 
 ## Limitations
 
@@ -196,13 +243,12 @@ Damien Rice - O - Cannonball.mp3
   - Live recordings or heavily remixed versions may not match
 - Files with generic titles may not find correct matches with text-based search
 - iTunes API may not have all songs, especially rare or independent releases
-- Filename format uses `AlbumArtist - Album - Song.mp3` convention
-  - Album Artist keeps compilation albums together
-  - Falls back to `AlbumArtist - Song.mp3` format if album is not present
+- Track numbers may not always be accurate or available for all releases
 - Rate limiting: delays between API requests
 - Album information may not always be accurate for compilations or special editions
-- Files will not be renamed if metadata is insufficient to prevent file loss
+- Files will not be renamed/moved if metadata is insufficient to prevent file loss
 - Metadata marked as "not found" indicates unsuccessful lookup through all methods
+- Folder structure is always `Artist/Album/`; not configurable yet
 
 ## Future Enhancements
 

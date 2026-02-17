@@ -1,3 +1,21 @@
+"""Tests for metadata sync and file renaming operations.
+
+This module tests the core sync_metadata_and_rename function which:
+- Fills missing metadata from filenames
+- Updates MP3 ID3 tags
+- Organizes files into folder structures
+- Logs changes for rollback capability
+
+Testing approach: Integration-style tests with mocked MP3 library (mutagen),
+mocked API calls (AcoustID, iTunes), and temporary file system operations.
+
+Key features tested:
+- Content preservation (checksum verification)
+- Metadata extraction and updates
+- Folder organization
+- Change logging for rollback
+"""
+
 import importlib.util
 import os
 from pathlib import Path
@@ -51,10 +69,20 @@ def patch_mp3(monkeypatch, tmp_path):
     monkeypatch.setattr(module, 'MP3', _fake_mp3)
     # Patch acoustid.match to return empty generator
     monkeypatch.setattr(module.acoustid, 'match', lambda *a, **k: [])
+    # Patch iTunes API to return empty results
+    monkeypatch.setattr(module, 'query_itunes_api', lambda *a, **k: {'_error': 'mocked'})
     yield
 
 
 def test_sync_metadata_and_rename_preserves_content_and_logs(tmp_path, monkeypatch):
+    """Test that file content is preserved and changes are logged.
+    
+    Verifies the complete sync workflow:
+    - File content (checksum) unchanged after processing
+    - File moved to correct folder structure
+    - Changes logged for rollback capability
+    - Metadata applied from parsed filename
+    """
     # Create a fake mp3 file (content is arbitrary bytes) with a generic name
     src = tmp_path / 'track01.mp3'
     src.write_bytes(b'FAKE_MP3_DATA')
@@ -73,9 +101,8 @@ def test_sync_metadata_and_rename_preserves_content_and_logs(tmp_path, monkeypat
     success = module.sync_metadata_and_rename(str(src), dry_run=False, logger=logger)
     assert success is True
 
-    # Find renamed file (albumartist used - from filename it should be 'Artist')
-    expected_name = 'Artist - Album - Song.mp3'
-    expected_path = tmp_path / expected_name
+    # Find renamed file in folder structure Artist/Album/Title.mp3
+    expected_path = tmp_path / 'Artist' / 'Album' / 'Song.mp3'
     assert expected_path.exists()
 
     # Check checksum unchanged
@@ -86,7 +113,9 @@ def test_sync_metadata_and_rename_preserves_content_and_logs(tmp_path, monkeypat
     assert len(logger.changes) == 1
     change = logger.changes[0]
     assert change['original_path'].endswith('track01.mp3')
-    assert change['new_path'].endswith(expected_name)
+    assert 'Artist' in change['new_path']
+    assert 'Album' in change['new_path']
+    assert 'Song.mp3' in change['new_path']
 
     # Save and load log to confirm valid JSON
     logger.save()

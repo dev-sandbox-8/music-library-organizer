@@ -1,63 +1,36 @@
 # Known Issues
 
-## 1. Multiple Artists on Same Album
+## 1. Multiple Artists on Same Album - ✅ **RESOLVED**
 
-**Issue:** The current filename format `Artist - Album - Song.mp3` causes problems when organizing by artist as the top-level differentiator, especially with compilation albums or albums featuring multiple artists.
+**Previous Issue:** The filename format `Artist - Album - Song.mp3` caused problems when organizing by artist as the top-level differentiator, especially with compilation albums or albums featuring multiple artists.
 
-**Example Problem:**
+**Solution Implemented (Feb 2026):**
+The script now creates a hierarchical folder structure:
 ```
-Album: "Now That's What I Call Music! 50"
-- Adele - Now That's What I Call Music! 50 - Rolling in the Deep.mp3
-- Bruno Mars - Now That's What I Call Music! 50 - Just the Way You Are.mp3
-- Katy Perry - Now That's What I Call Music! 50 - Firework.mp3
-```
-
-When organizing by artist folders, songs from the same album get scattered across different artist directories.
-
-**Proposed Solutions:**
-
-### Option A: Use Album Artist Field (Recommended)
-Use the `albumartist` metadata field for the filename instead of `artist`:
-```
-Format: AlbumArtist - Album - Song.mp3
+<Artist>/<Album>/<Track Number> - <Track Name>.mp3
 ```
 
 For compilation albums:
-- `albumartist` = "Various Artists" or the album's main artist
-- `artist` = individual track artist
+- Uses `albumartist` = "Various Artists" for the folder
+- Individual track artists are preserved in metadata
+- All tracks from the same album stay together
 
-Benefits:
-- Keeps compilation albums together
+Example:
+```
+Various Artists/
+  Now That's What I Call Music! 50/
+    01 - Rolling in the Deep.mp3    (Adele)
+    02 - Just the Way You Are.mp3   (Bruno Mars)
+    03 - Firework.mp3                (Katy Perry)
+```
+
+**Benefits:**
+- Keeps compilation albums together physically
 - Standard approach used by most music players
-- Individual track artists are still preserved in metadata
+- Individual track artists preserved in ID3 tags
+- Track numbers maintain proper ordering
 
-Changes needed:
-- Add `albumartist` to metadata lookups
-- Modify filename format to use `albumartist` instead of `artist`
-- Fall back to `artist` if `albumartist` is not available
-
-### Option B: Configurable Format
-Allow users to choose their preferred format:
-1. `Artist - Album - Song.mp3` (current, good for single-artist albums)
-2. `AlbumArtist - Album - Song.mp3` (better for compilations)
-3. `Album - Artist - Song.mp3` (album-first organization)
-
-### Option C: Smart Detection
-Automatically detect compilation albums:
-- If album has >3 different artists, mark as compilation
-- Use "Various Artists" as album artist for compilations
-- Use regular artist for single-artist albums
-
-**Impact:**
-- Affects file organization strategy
-- May require re-organizing existing libraries
-- Different users have different preferences
-
-**Workaround (Current):**
-python "update-mp3-metadata.py" ~/Music/TEST_BATCH
-
-**Priority:** Medium
-**Complexity:** Low-Medium (requires metadata field addition and format change)
+**Status:** ✅ **RESOLVED** - Folder organization implemented
 
 **Issue:** Audio fingerprinting only works for songs in the AcoustID/MusicBrainz database.
 
@@ -65,10 +38,7 @@ python "update-mp3-metadata.py" ~/Music/TEST_BATCH
 
 ---
 
-# Verify, then continue
-python "update-mp3-metadata.py" ~/Music/YourMusicFolder/Artist1
-
-**Issue:** iTunes API has undocumented rate limits. Processing very large libraries may trigger temporary blocks.
+## 3. iTunes API Rate Limiting
 
 - Script may fail on large batch operations
 - No official documentation on limits
@@ -93,9 +63,37 @@ python "update-mp3-metadata.py" ~/Music/YourMusicFolder/Artist1
 
 ---
 
+## 5. Folder Organization Considerations
+
+**Note:** The script now organizes files into `Artist/Album/Track - Title.mp3` structure.
+
+**Considerations:**
+
+### Empty Folders
+- After moving files, original folders may be left empty
+- The script does not automatically clean up empty folders
+- Manual cleanup may be needed after processing
+
+### Existing Folder Structures
+- If you already have files organized in folders, they will be reorganized
+- The script uses the base directory (containing the MP3s) as the root
+- All files will be moved to `Artist/Album/` structure under that root
+
+### Flat vs Hierarchical
+- The script now creates hierarchical organization by default
+- Not currently configurable (future enhancement)
+- Better for large collections with many albums
+
+### Track Number Availability
+- Track numbers may not always be found in metadata
+- Files without track numbers are named with just the title
+- This can cause sorting issues for albums with missing track info
+
+**Workaround:** Review albums without track numbers and add them manually if needed.
+
 ---
 
-## 5. Risks When Running on Large Music Collections
+## 6. Risks When Running on Large Music Collections
 
 **Critical Risks:**
 - **Very long filenames:** Combined artist + album + title exceeding OS limits (255 chars on most systems)
@@ -209,7 +207,7 @@ Process max N files per run to avoid:
 ✅ **Change logging** - JSON log of all changes for rollback  
 ✅ **Filename sanitization** - Replaces invalid characters automatically  
 ✅ **Content verification** - SHA256 checksums ensure audio data unchanged  
-✅ **Test framework** - Automated tests protect against regressions
+✅ **Test framework** - Automated tests protect against regressions (with comprehensive documentation)
 
 ## Missing Safeguards
 
@@ -248,13 +246,17 @@ Instead:
 5. ~~Filename sanitization~~ ✅ **IMPLEMENTED** (Feb 2026)
 6. ~~Content verification (checksums)~~ ✅ **IMPLEMENTED** (Feb 2026)
 7. ~~Test framework~~ ✅ **IMPLEMENTED** (Feb 2026)
+8. ~~Folder organization (Artist/Album/ structure)~~ ✅ **IMPLEMENTED** (Feb 2026)
+9. ~~Track number metadata support~~ ✅ **IMPLEMENTED** (Feb 2026)
+10. ~~Test documentation~~ ✅ **IMPLEMENTED** (Feb 2026)
 
 ### Remaining
-1. Implement configurable filename formats
-2. Add compilation album detection
-3. Support for additional metadata fields (year, genre, track number, disc number)
+1. Implement configurable folder/filename formats
+2. Add compilation album detection (auto-detect Various Artists)
+3. Support for additional metadata fields (year, genre, disc number)
 4. Interactive mode for user confirmation
 5. Batch size limiting for API requests ⚠️ **HIGH PRIORITY**
 6. Resume capability for interrupted processing
 7. Multiple API source fallbacks
 8. Length validation with warnings
+9. Automatic cleanup of empty folders

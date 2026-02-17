@@ -174,9 +174,18 @@ def scan_mp3_files(folder):
     return mp3_files
 
 def parse_filename(filename):
-    # Example: "AlbumArtist - Album - Song.mp3"
+    # Example: "AlbumArtist - Album - Song.mp3" or "01 - Song.mp3"
     base = os.path.splitext(os.path.basename(filename))[0]
     parts = base.split(' - ')
+    
+    # Check if first part is a track number (1-3 digits)
+    result = {}
+    if len(parts) >= 1 and parts[0].strip().isdigit() and len(parts[0].strip()) <= 3:
+        result['tracknumber'] = parts[0].strip()
+        if len(parts) >= 2:
+            result['title'] = parts[1]
+        return result
+    
     if len(parts) == 3:
         # Use the first part as albumartist (keeps albums together)
         return {'albumartist': parts[0], 'album': parts[1], 'title': parts[2]}
@@ -214,6 +223,17 @@ def query_acoustid(mp3_path):
                             # Get album artist from release
                             if release.get('artist-credit'):
                                 albumartist = release['artist-credit'][0]['name']
+                        
+                        # Try to get track number from the recording
+                        tracknumber = None
+                        if data.get('releases') and len(data['releases']) > 0:
+                            release = data['releases'][0]
+                            if release.get('media') and len(release['media']) > 0:
+                                tracks = release['media'][0].get('tracks', [])
+                                for track in tracks:
+                                    if track.get('recording', {}).get('id') == recording_id:
+                                        tracknumber = track.get('position')
+                                        break
                 except:
                     pass
                 
@@ -222,6 +242,7 @@ def query_acoustid(mp3_path):
                     'albumartist': albumartist or artist,  # Fall back to track artist
                     'title': title,
                     'album': album,
+                    'tracknumber': tracknumber,
                     'confidence': score
                 }
     except acoustid.NoBackendError:
@@ -273,7 +294,8 @@ def query_itunes_api(artist=None, title=None, album=None):
                 'artist': artist_name,
                 'albumartist': album_artist,
                 'album': result.get('collectionName'),
-                'title': result.get('trackName')
+                'title': result.get('trackName'),
+                'tracknumber': str(result.get('trackNumber')) if result.get('trackNumber') else None
             }
         else:
             print(f"Warning: No results from iTunes API for search: {params['term']}")
@@ -294,14 +316,15 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
         'artist': audio.get('artist', [None])[0],
         'albumartist': audio.get('albumartist', [None])[0],
         'album': audio.get('album', [None])[0],
-        'title': audio.get('title', [None])[0]
+        'title': audio.get('title', [None])[0],
+        'tracknumber': audio.get('tracknumber', [None])[0]
     }
 
     filename_info = parse_filename(mp3_path)
     changed = False
 
     # Fill missing metadata from filename
-    for key in ['albumartist', 'album', 'title']:
+    for key in ['albumartist', 'album', 'title', 'tracknumber']:
         if key in filename_info and (key not in audio or not audio[key]):
             audio[key] = filename_info[key]
             changed = True
@@ -313,7 +336,7 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
 
     # If still missing, try audio fingerprinting first (most accurate)
     needs_lookup = False
-    for key in ['artist', 'albumartist', 'album', 'title']:
+    for key in ['artist', 'albumartist', 'album', 'title', 'tracknumber']:
         current_value = audio.get(key, [None])[0]
         if not current_value or current_value in ['Unknown', '-', '', ' ']:
             needs_lookup = True
@@ -325,7 +348,7 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
         
         if acoustid_result and '_error' not in acoustid_result:
             # Apply results from audio fingerprinting
-            for key in ['artist', 'albumartist', 'album', 'title']:
+            for key in ['artist', 'albumartist', 'album', 'title', 'tracknumber']:
                 if key in acoustid_result and acoustid_result[key]:
                     current_value = audio.get(key, [None])[0]
                     if not current_value or current_value in ['Unknown', '-', '', ' ']:
@@ -337,7 +360,7 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
             time.sleep(1)  # Be respectful with API rate
     
     # If still missing after fingerprinting, try text-based iTunes lookup
-    for key in ['artist', 'albumartist', 'album', 'title']:
+    for key in ['artist', 'albumartist', 'album', 'title', 'tracknumber']:
         current_value = audio.get(key, [None])[0]
         # Skip if field is present and not generic/invalid
         if current_value and current_value not in ['Unknown', '-', '', ' ']:
@@ -386,6 +409,12 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
             audio[key] = 'not found'
             changed = True
     
+    # Track number is optional - mark as "not found" only if invalid
+    tracknumber = audio.get('tracknumber', [None])[0]
+    if tracknumber and tracknumber in ['Unknown', '-', '', ' ']:
+        audio['tracknumber'] = 'not found'
+        changed = True
+    
     # If albumartist is not found but artist is, use artist as albumartist
     if audio.get('albumartist', [None])[0] == 'not found' and audio.get('artist', [None])[0] not in ['not found', None]:
         audio['albumartist'] = audio.get('artist', ['not found'])[0]
@@ -402,7 +431,8 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
             audio.save()
             print(f"Updated metadata for: {mp3_path}")
 
-    # Rename file to match metadata using albumartist (keeps albums together)
+    # Organize file into folder structure: Artist/Album/Track Number - Track Name.mp3
+    # Use albumartist for folder (keeps albums together)
     albumartist = audio.get('albumartist', ['not found'])[0]
     # Fall back to artist if albumartist is not available
     if not albumartist or albumartist in ['Unknown', 'not found']:
@@ -410,20 +440,36 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
     
     album = audio.get('album', ['not found'])[0]
     title = audio.get('title', ['not found'])[0]
+    tracknumber = audio.get('tracknumber', [None])[0]
     
-    # Skip renaming if all metadata is empty or not found to prevent file loss
+    # Skip renaming if essential metadata is missing
     if not albumartist or albumartist in ['Unknown', 'not found']:
         if not title or title in ['Unknown', 'not found']:
             print(f"Warning: Skipping rename for {mp3_path} - insufficient metadata (no album artist or title)")
             return True
     
-    # Sanitize filename components
+    # Sanitize folder and filename components
     albumartist = sanitize_filename(albumartist)
     album = sanitize_filename(album)
     title = sanitize_filename(title)
     
-    new_name = f"{albumartist} - {album} - {title}.mp3"
-    new_path = os.path.join(os.path.dirname(mp3_path), new_name)
+    # Build new filename with track number if available
+    if tracknumber and tracknumber not in ['not found', None]:
+        # Pad track number to 2 digits
+        try:
+            track_num = int(tracknumber)
+            track_str = f"{track_num:02d}"
+        except (ValueError, TypeError):
+            track_str = str(tracknumber)
+        new_name = f"{track_str} - {title}.mp3"
+    else:
+        new_name = f"{title}.mp3"
+    
+    # Create directory structure
+    base_dir = os.path.dirname(mp3_path)
+    artist_dir = os.path.join(base_dir, albumartist)
+    album_dir = os.path.join(artist_dir, album)
+    new_path = os.path.join(album_dir, new_name)
 
     if mp3_path != new_path:
         # Check if target file already exists to prevent overwriting
@@ -434,10 +480,14 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
             return False
         try:
             if dry_run:
-                print(f"[DRY RUN] Would rename: {os.path.basename(mp3_path)} -> {new_name}")
+                print(f"[DRY RUN] Would move: {os.path.basename(mp3_path)} -> {albumartist}/{album}/{new_name}")
             else:
+                # Create directory structure if it doesn't exist
+                os.makedirs(album_dir, exist_ok=True)
+                
+                # Move file to new location
                 os.rename(mp3_path, new_path)
-                print(f"Renamed: {os.path.basename(mp3_path)} -> {new_name}")
+                print(f"Moved: {os.path.basename(mp3_path)} -> {albumartist}/{album}/{new_name}")
                 
                 # Log the change
                 if logger:
@@ -445,11 +495,12 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
                         'artist': audio.get('artist', [None])[0],
                         'albumartist': audio.get('albumartist', [None])[0],
                         'album': audio.get('album', [None])[0],
-                        'title': audio.get('title', [None])[0]
+                        'title': audio.get('title', [None])[0],
+                        'tracknumber': audio.get('tracknumber', [None])[0]
                     }
                     logger.log_change(mp3_path, new_path, original_metadata, new_metadata)
         except Exception as e:
-            print(f"Error: Failed to rename {mp3_path}: {e}")
+            print(f"Error: Failed to move {mp3_path}: {e}")
             return False
     return True
 
@@ -460,7 +511,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  # Normal operation
+  # Normal operation - organizes files into Artist/Album/ folders
   python "update-mp3-metadata.py" ~/Music/MyAlbums
   
   # Dry-run (preview changes without modifying files)
@@ -468,6 +519,10 @@ Examples:
   
   # Rollback changes from a previous run
   python "update-mp3-metadata.py" --rollback changes_20260208_123456.json
+
+File Organization:
+  Files are organized into: <Artist>/<Album>/<Track Number> - <Track Name>.mp3
+  Example: Coldplay/Parachutes/01 - Yellow.mp3
         '''
     )
     

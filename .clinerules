@@ -26,12 +26,22 @@ This is an MP3 metadata synchronization script that identifies and organizes MP3
 2. **artist** - Individual track performer
 3. **album** - Album name
 4. **title** - Song title
+5. **tracknumber** - Track position on album
 
 Fallback: `albumartist` → `artist` (and vice versa if one is missing)
 
 ### File Naming Convention
-Format: `{albumartist} - {album} - {title}.mp3`
-- Uses `albumartist` to keep albums together
+Files are organized into a hierarchical folder structure:
+```
+<Artist>/<Album>/<Track Number> - <Track Name>.mp3
+```
+
+Example: `Coldplay/Parachutes/05 - Yellow.mp3`
+
+Details:
+- Uses `albumartist` for Artist folder (keeps albums together)
+- Track numbers are zero-padded to 2 digits (01, 02, etc.)
+- If no track number available, uses just track name: `<Track Name>.mp3`
 - Falls back to `artist` if `albumartist` unavailable
 - Sanitizes special characters (`/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`)
 - Truncates at 240 chars (leaves room for path)
@@ -60,12 +70,49 @@ Format: `{albumartist} - {album} - {title}.mp3`
 ### Test Coverage
 - `tests/test_utils.py` - Unit tests for utility functions
 - `tests/test_sync.py` - Integration tests with mocked MP3/API calls
+- `tests/test_folder_organization.py` - Tests for folder structure organization
 
 ### Test Requirements
 - Verify checksum preservation (file content unchanged)
 - Validate metadata parsing from filenames
 - Confirm rename behavior with logging
 - Mock external dependencies (AcoustID, iTunes API, mutagen)
+
+### Test Documentation Requirements
+**CRITICAL: Each test file MUST include:**
+
+1. **Module-level docstring** at the top of the file describing:
+   - What feature(s) the test file covers
+   - Overall testing approach (unit vs integration)
+   - Any special setup or dependencies
+
+2. **Function-level docstrings** for each test describing:
+   - What specific behavior is being tested
+   - Expected outcome
+   - Any edge cases covered
+
+Example:
+```python
+"""
+Tests for folder organization feature.
+
+This module tests the hierarchical folder structure creation:
+Artist/Album/Track - Title.mp3
+
+Tests cover:
+- Directory creation
+- File moving to correct locations
+- Track number formatting
+- Content preservation during moves
+"""
+
+def test_folder_structure_created(tmp_path, monkeypatch):
+    """Test that Artist/Album/ folder structure is created.
+    
+    Verifies that sync_metadata_and_rename creates the proper
+    directory hierarchy when organizing files.
+    """
+```
 
 ### Running Tests
 ```bash
