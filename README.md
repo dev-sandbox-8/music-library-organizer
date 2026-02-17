@@ -97,6 +97,10 @@ This is the main processing function that:
 - `requests` library for API calls
 - `pyacoustid` library for audio fingerprinting
 - `chromaprint` (fpcalc) for generating audio fingerprints
+- `pytest` for running tests (development)
+
+### Content Verification
+The script includes a `compute_checksum()` function that uses SHA256 hashing to verify file content is preserved during operations. This ensures audio data remains unchanged when metadata is updated or files are renamed.
 
 ### Installation
 ```bash
@@ -144,6 +148,22 @@ The script will:
 - Process each file and show progress
 - Display a completion message when done
 
+### Run Tests
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Run the test suite
+pytest -q
+```
+
+The test suite verifies:
+- File content preservation (checksum verification)
+- Metadata parsing from filenames
+- Filename sanitization
+- Rename operations with logging
+- Rollback capability
+
 ## Workflow Example
 
 ### Before:
@@ -188,10 +208,16 @@ Damien Rice - O - Cannonball.mp3
 
 Possible improvements:
 - Support for additional metadata fields (year, genre, track number)
-- Multiple API fallbacks (Last.fm, AcoustID, etc.)
-- Audio fingerprinting for more accurate matching
+- Multiple API fallbacks (Last.fm, etc.)
 - Interactive mode to confirm changes before applying
-- Dry-run mode to preview changes without modifying files
 - Configuration file for default folder paths and API preferences
 - Resume capability for interrupted processing
-- Detailed logging to file
+- Batch size limiting
+
+**Completed:**
+- ✅ Audio fingerprinting for accurate matching (AcoustID/MusicBrainz)
+- ✅ Dry-run mode to preview changes without modifying files
+- ✅ Detailed logging to file with rollback capability
+- ✅ Filename sanitization for invalid characters
+- ✅ Content verification via checksums
+- ✅ Test framework for protecting features

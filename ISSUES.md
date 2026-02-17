@@ -204,15 +204,16 @@ Process max N files per run to avoid:
 ✅ **Skips insufficient metadata** - Won't rename if no artist/title  
 ✅ **Error handling** - Catches and reports API failures  
 ✅ **Marks unfound** - Uses "not found" for failed lookups  
-✅ **Preserves originals on error** - Returns False, keeps file unchanged
+✅ **Preserves originals on error** - Returns False, keeps file unchanged  
+✅ **Dry-run mode** - Preview changes without modifying files  
+✅ **Change logging** - JSON log of all changes for rollback  
+✅ **Filename sanitization** - Replaces invalid characters automatically  
+✅ **Content verification** - SHA256 checksums ensure audio data unchanged  
+✅ **Test framework** - Automated tests protect against regressions
 
 ## Missing Safeguards
 
-❌ **No dry-run mode**  
-❌ **No undo/rollback capability**  
-❌ **No filename sanitization**  
-❌ **No length checking**  
-❌ **No change logging**  
+❌ **No length checking** (though 240 char limit is enforced)  
 ❌ **No batch limiting**  
 ❌ **No progress saving/resuming**
 
@@ -230,25 +231,30 @@ Instead:
 5. **Process one folder at a time** initially
 6. **Keep backups** until confident all is correct
 
-**Priority improvements needed:**
-1. Dry-run mode
-2. Change logging
-3. Filename sanitization
-4. Length validation
+**Remaining priority improvements:**
+1. Length validation (with warnings)
+2. Batch size limiting
+3. Progress saving/resuming
 
 ---
 
 ## Future Improvements
 
-1. ~~Add support for `albumartist` metadata field~~ ✅ **IMPLEMENTED**
-2. Implement configurable filename formats
-3. Add compilation album detection
-4. Support for additional metadata fields (year, genre, track number, disc number)
-5. Interactive mode for user confirmation
-6. **Dry-run mode to preview changes** ⚠️ **HIGH PRIORITY**
-7. Batch size limiting for API requests
-8. Resume capability for interrupted processing
-9. Detailed logging to file
-10. Multiple API source fallbacks
-11. **Filename sanitization** ⚠️ **HIGH PRIORITY**
-12. **Undo/rollback capability** ⚠️ **HIGH PRIORITY**
+### Completed ✅
+1. ~~Add support for `albumartist` metadata field~~ ✅ **IMPLEMENTED** (Feb 2026)
+2. ~~Dry-run mode to preview changes~~ ✅ **IMPLEMENTED** (Feb 2026)
+3. ~~Detailed logging to file~~ ✅ **IMPLEMENTED** (Feb 2026)
+4. ~~Undo/rollback capability~~ ✅ **IMPLEMENTED** (Feb 2026)
+5. ~~Filename sanitization~~ ✅ **IMPLEMENTED** (Feb 2026)
+6. ~~Content verification (checksums)~~ ✅ **IMPLEMENTED** (Feb 2026)
+7. ~~Test framework~~ ✅ **IMPLEMENTED** (Feb 2026)
+
+### Remaining
+1. Implement configurable filename formats
+2. Add compilation album detection
+3. Support for additional metadata fields (year, genre, track number, disc number)
+4. Interactive mode for user confirmation
+5. Batch size limiting for API requests ⚠️ **HIGH PRIORITY**
+6. Resume capability for interrupted processing
+7. Multiple API source fallbacks
+8. Length validation with warnings
