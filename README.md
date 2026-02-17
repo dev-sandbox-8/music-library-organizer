@@ -121,7 +121,7 @@ pip install mutagen requests pyacoustid
 source venv/bin/activate
 
 # Run the script (processes ~/mp3-metadata-poc by default)
-python "import os.py"
+python "update-mp3-metadata.py"
 ```
 
 #### Target a Specific Folder
@@ -130,12 +130,12 @@ python "import os.py"
 source venv/bin/activate
 
 # Process a specific folder
-python "import os.py" /path/to/your/music/folder
+python "update-mp3-metadata.py" /path/to/your/music/folder
 
 # Examples:
-python "import os.py" ~/Music/iTunes
-python "import os.py" "/Users/username/My Music Collection"
-python "import os.py" .
+python "update-mp3-metadata.py" ~/Music/iTunes
+python "update-mp3-metadata.py" "/Users/username/My Music Collection"
+python "update-mp3-metadata.py" .
 ```
 
 The script will:

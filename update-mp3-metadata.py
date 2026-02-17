@@ -1,10 +1,155 @@
 import os
 import sys
+import argparse
+import csv
+import json
+from datetime import datetime
 from mutagen.easyid3 import EasyID3
 from mutagen.mp3 import MP3
 import requests
 import time
 import acoustid
+
+def sanitize_filename(filename):
+    """Replace invalid filename characters with safe alternatives."""
+    # Dictionary of replacements
+    replacements = {
+        '/': '_',
+        '\\': '_',
+        ':': ' -',
+        '*': '',
+        '?': '',
+        '"': "'",
+        '<': '',
+        '>': '',
+        '|': '-'
+    }
+    
+    for char, replacement in replacements.items():
+        filename = filename.replace(char, replacement)
+    
+    # Remove leading/trailing spaces and dots (Windows doesn't like these)
+    filename = filename.strip('. ')
+    
+    # Limit length (leave room for path and .mp3 extension)
+    max_length = 240
+    if len(filename) > max_length:
+        # Try to truncate at a word boundary
+        filename = filename[:max_length].rsplit(' ', 1)[0]
+    
+    return filename
+
+class ChangeLogger:
+    """Logs all file changes for potential rollback."""
+    
+    def __init__(self, log_file):
+        self.log_file = log_file
+        self.changes = []
+        
+    def log_change(self, original_path, new_path, old_metadata, new_metadata, operation='rename'):
+        """Record a change."""
+        change = {
+            'timestamp': datetime.now().isoformat(),
+            'operation': operation,
+            'original_path': original_path,
+            'new_path': new_path,
+            'old_metadata': old_metadata,
+            'new_metadata': new_metadata
+        }
+        self.changes.append(change)
+    
+    def save(self):
+        """Save changes to log file."""
+        if not self.changes:
+            return
+        
+        # Save as JSON for easy parsing
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+            json.dump(self.changes, f, indent=2, ensure_ascii=False)
+        
+        print(f"\nChange log saved to: {self.log_file}")
+        print(f"Total changes logged: {len(self.changes)}")
+
+def rollback_changes(log_file):
+    """Rollback changes from a log file."""
+    if not os.path.exists(log_file):
+        print(f"Error: Log file not found: {log_file}")
+        return False
+    
+    with open(log_file, 'r', encoding='utf-8') as f:
+        changes = json.load(f)
+    
+    if not changes:
+        print("No changes to rollback.")
+        return True
+    
+    print(f"Found {len(changes)} changes to rollback.")
+    print("\nWARNING: This will:")
+    print("  1. Rename files back to their original names")
+    print("  2. Restore original metadata")
+    print("\nProceed? (yes/no): ", end='')
+    
+    response = input().strip().lower()
+    if response != 'yes':
+        print("Rollback cancelled.")
+        return False
+    
+    success_count = 0
+    error_count = 0
+    
+    # Process in reverse order
+    for change in reversed(changes):
+        try:
+            new_path = change['new_path']
+            original_path = change['original_path']
+            old_metadata = change['old_metadata']
+            
+            # Check if file exists at new location
+            if not os.path.exists(new_path):
+                print(f"Warning: File not found at new location: {new_path}")
+                # Try original location
+                if os.path.exists(original_path):
+                    print(f"  File still at original location, skipping.")
+                    continue
+                else:
+                    print(f"  File not found anywhere, skipping.")
+                    error_count += 1
+                    continue
+            
+            # Restore metadata
+            try:
+                audio = MP3(new_path, ID3=EasyID3)
+                for key, value in old_metadata.items():
+                    if value:
+                        audio[key] = value
+                    elif key in audio:
+                        del audio[key]
+                audio.save()
+            except Exception as e:
+                print(f"Warning: Could not restore metadata for {new_path}: {e}")
+            
+            # Rename back to original
+            if new_path != original_path:
+                # Check if original path is available
+                if os.path.exists(original_path):
+                    print(f"Error: Original path already exists: {original_path}")
+                    error_count += 1
+                    continue
+                
+                os.rename(new_path, original_path)
+                print(f"Restored: {os.path.basename(original_path)}")
+            
+            success_count += 1
+            
+        except Exception as e:
+            print(f"Error rolling back {change.get('new_path', 'unknown')}: {e}")
+            error_count += 1
+    
+    print(f"\nRollback complete!")
+    print(f"  Successfully restored: {success_count}")
+    print(f"  Errors: {error_count}")
+    
+    return error_count == 0
 
 def scan_mp3_files(folder):
     mp3_files = []
@@ -123,12 +268,20 @@ def query_itunes_api(artist=None, title=None, album=None):
         print(f"Warning: iTunes API lookup failed for search '{params['term']}': {e}")
         return {'_error': str(e)}
 
-def sync_metadata_and_rename(mp3_path):
+def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
     try:
         audio = MP3(mp3_path, ID3=EasyID3)
     except Exception:
         print(f"Skipping {mp3_path}: not a valid MP3 or missing ID3 tags.")
         return False
+    
+    # Store original metadata for logging
+    original_metadata = {
+        'artist': audio.get('artist', [None])[0],
+        'albumartist': audio.get('albumartist', [None])[0],
+        'album': audio.get('album', [None])[0],
+        'title': audio.get('title', [None])[0]
+    }
 
     filename_info = parse_filename(mp3_path)
     changed = False
@@ -229,8 +382,11 @@ def sync_metadata_and_rename(mp3_path):
         changed = True
 
     if changed:
-        audio.save()
-        print(f"Updated metadata for: {mp3_path}")
+        if dry_run:
+            print(f"[DRY RUN] Would update metadata for: {mp3_path}")
+        else:
+            audio.save()
+            print(f"Updated metadata for: {mp3_path}")
 
     # Rename file to match metadata using albumartist (keeps albums together)
     albumartist = audio.get('albumartist', ['not found'])[0]
@@ -247,6 +403,11 @@ def sync_metadata_and_rename(mp3_path):
             print(f"Warning: Skipping rename for {mp3_path} - insufficient metadata (no album artist or title)")
             return True
     
+    # Sanitize filename components
+    albumartist = sanitize_filename(albumartist)
+    album = sanitize_filename(album)
+    title = sanitize_filename(title)
+    
     new_name = f"{albumartist} - {album} - {title}.mp3"
     new_path = os.path.join(os.path.dirname(mp3_path), new_name)
 
@@ -258,32 +419,104 @@ def sync_metadata_and_rename(mp3_path):
             print(f"  Skipping rename to prevent file loss.")
             return False
         try:
-            os.rename(mp3_path, new_path)
-            print(f"Renamed: {os.path.basename(mp3_path)} -> {new_name}")
+            if dry_run:
+                print(f"[DRY RUN] Would rename: {os.path.basename(mp3_path)} -> {new_name}")
+            else:
+                os.rename(mp3_path, new_path)
+                print(f"Renamed: {os.path.basename(mp3_path)} -> {new_name}")
+                
+                # Log the change
+                if logger:
+                    new_metadata = {
+                        'artist': audio.get('artist', [None])[0],
+                        'albumartist': audio.get('albumartist', [None])[0],
+                        'album': audio.get('album', [None])[0],
+                        'title': audio.get('title', [None])[0]
+                    }
+                    logger.log_change(mp3_path, new_path, original_metadata, new_metadata)
         except Exception as e:
             print(f"Error: Failed to rename {mp3_path}: {e}")
             return False
     return True
 
 if __name__ == "__main__":
-    # Get folder from command-line argument or use default
-    if len(sys.argv) > 1:
-        folder = os.path.expanduser(sys.argv[1])
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='MP3 Metadata Sync Script - Identify and organize MP3 files using audio fingerprinting and online databases.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Normal operation
+  python "update-mp3-metadata.py" ~/Music/MyAlbums
+  
+  # Dry-run (preview changes without modifying files)
+  python "update-mp3-metadata.py" --dry-run ~/Music/MyAlbums
+  
+  # Rollback changes from a previous run
+  python "update-mp3-metadata.py" --rollback changes_20260208_123456.json
+        '''
+    )
+    
+    parser.add_argument('folder', nargs='?', help='Folder to process (default: ~/mp3-metadata-poc)')
+    parser.add_argument('--dry-run', action='store_true', help='Preview changes without modifying files')
+    parser.add_argument('--rollback', metavar='LOG_FILE', help='Rollback changes from specified log file')
+    parser.add_argument('--log', metavar='LOG_FILE', help='Custom log file path (default: auto-generated)')
+    
+    args = parser.parse_args()
+    
+    # Handle rollback mode
+    if args.rollback:
+        success = rollback_changes(args.rollback)
+        sys.exit(0 if success else 1)
+    
+    # Get folder from argument or use default
+    if args.folder:
+        folder = os.path.expanduser(args.folder)
     else:
         folder = os.path.expanduser("~/mp3-metadata-poc")
 
     if not os.path.isdir(folder):
         print(f"Error: '{folder}' is not a valid directory")
         sys.exit(1)
-
+    
+    # Set up logging
+    logger = None
+    if not args.dry_run:
+        if args.log:
+            log_file = args.log
+        else:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            log_file = os.path.join(os.path.dirname(__file__) or '.', f'changes_{timestamp}.json')
+        logger = ChangeLogger(log_file)
+        print(f"Change log will be saved to: {log_file}")
+    
+    if args.dry_run:
+        print("=" * 60)
+        print("DRY RUN MODE - No files will be modified")
+        print("=" * 60)
+    
     print(f"Processing MP3 files in: {folder}")
     mp3_files = scan_mp3_files(folder)
     print(f"Found {len(mp3_files)} MP3 file(s)\n")
 
     error_count = 0
     for mp3_file in mp3_files:
-        success = sync_metadata_and_rename(mp3_file)
+        success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger)
         if not success:
             error_count += 1
-
-    print(f"\nProcessing complete! {error_count} file(s) had errors or could not be updated.")
+    
+    # Save change log
+    if logger and not args.dry_run:
+        logger.save()
+    
+    if args.dry_run:
+        print("\n" + "=" * 60)
+        print("DRY RUN COMPLETE - No files were modified")
+        print("=" * 60)
+        print("\nTo apply these changes, run without --dry-run flag")
+        print(f"Processing complete! {error_count} file(s) had errors or could not be updated.")
+    else:
+        print(f"\nProcessing complete! {error_count} file(s) had errors or could not be updated.")
+        if logger and logger.changes:
+            print(f"\nTo undo these changes, run:")
+            print(f"  python \"update-mp3-metadata.py\" --rollback {log_file}")

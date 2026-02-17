@@ -54,32 +54,22 @@ Automatically detect compilation albums:
 - Different users have different preferences
 
 **Workaround (Current):**
-Manually set `albumartist` field in files before running the script, or manually organize files after processing.
+python "update-mp3-metadata.py" ~/Music/TEST_BATCH
 
 **Priority:** Medium
 **Complexity:** Low-Medium (requires metadata field addition and format change)
 
----
-
-## 2. Audio Fingerprinting Database Coverage
-
 **Issue:** Audio fingerprinting only works for songs in the AcoustID/MusicBrainz database.
 
-**Impact:**
-- Very obscure, rare, or brand new releases may not be identified
-- Live recordings or heavily remixed versions may not match
-- Independent/self-published music may not be in the database
-
-**Status:** Known limitation, no fix available
 **Workaround:** Falls back to text-based iTunes API search
 
 ---
 
-## 3. iTunes API Rate Limiting
+# Verify, then continue
+python "update-mp3-metadata.py" ~/Music/YourMusicFolder/Artist1
 
 **Issue:** iTunes API has undocumented rate limits. Processing very large libraries may trigger temporary blocks.
 
-**Impact:**
 - Script may fail on large batch operations
 - No official documentation on limits
 
@@ -92,9 +82,6 @@ Manually set `albumartist` field in files before running the script, or manually
 ---
 
 ## 4. Album Metadata Accuracy
-
-**Issue:** Album information may not always be accurate, especially for:
-- Compilations
 - Special editions
 - Reissues
 - Region-specific releases
@@ -111,17 +98,10 @@ Manually set `albumartist` field in files before running the script, or manually
 ## 5. Risks When Running on Large Music Collections
 
 **Critical Risks:**
-
-### A. Filename Issues
-- **Special characters:** Artist/album/title names with `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|` will cause rename failures
 - **Very long filenames:** Combined artist + album + title exceeding OS limits (255 chars on most systems)
 - **Unicode/emoji:** Some filesystems may not handle certain characters properly
 - **Case sensitivity:** macOS is case-insensitive by default; watch for conflicts
-
-### B. Data Integrity Risks
-- **Network interruptions:** API failures mid-process could leave files in inconsistent state
 - **Power loss:** Files being written when interrupted could be corrupted
-- **Disk space:** Large collections require adequate free space for metadata updates
 
 ### C. Organizational Issues
 - **False matches:** Wrong identification leads to incorrect metadata and filenames
@@ -141,7 +121,6 @@ Manually set `albumartist` field in files before running the script, or manually
 ```bash
 # Create a complete backup of your music folder
 cp -R ~/Music/YourMusicFolder ~/Music/YourMusicFolder_BACKUP_$(date +%Y%m%d)
-```
 
 ### Phase 2: Test on Copy
 ```bash
@@ -149,7 +128,7 @@ cp -R ~/Music/YourMusicFolder ~/Music/YourMusicFolder_BACKUP_$(date +%Y%m%d)
 mkdir ~/Music/TEST_BATCH
 cp ~/Music/YourMusicFolder/*.mp3 ~/Music/TEST_BATCH/ | head -20
 cd ~/mp3-metadata-poc && source venv/bin/activate
-python "import os.py" ~/Music/TEST_BATCH
+python "update-mp3-metadata.py" ~/Music/TEST_BATCH
 ```
 
 ### Phase 3: Manual Verification
@@ -161,7 +140,6 @@ python "import os.py" ~/Music/TEST_BATCH
 ### Phase 4: Test Edge Cases
 Create test copies with:
 - Very long artist/album/title names
-- Special characters (`Artist/Name`, `Album: Title`, etc.)
 - Files with no metadata at all
 - Files already perfectly tagged
 - Compilation albums with multiple artists
@@ -171,9 +149,9 @@ Create test copies with:
 Process in batches:
 ```bash
 # Process one artist folder at a time
-python "import os.py" ~/Music/YourMusicFolder/Artist1
+python "update-mp3-metadata.py" ~/Music/YourMusicFolder/Artist1
 # Verify, then continue
-python "import os.py" ~/Music/YourMusicFolder/Artist2
+python "update-mp3-metadata.py" ~/Music/YourMusicFolder/Artist2
 ```
 
 ---
@@ -183,7 +161,7 @@ python "import os.py" ~/Music/YourMusicFolder/Artist2
 ### 1. **Dry-Run Mode** (HIGH PRIORITY)
 Add a `--dry-run` flag to preview changes without modifying files:
 ```bash
-python "import os.py" --dry-run ~/Music
+python "update-mp3-metadata.py" --dry-run ~/Music
 ```
 Shows what would happen without actually changing anything.
 
