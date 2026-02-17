@@ -39,6 +39,20 @@ def sanitize_filename(filename):
     
     return filename
 
+def compute_checksum(file_path, algo='sha256'):
+    """Compute a checksum for a file to help verify content retention.
+
+    Reads the file in chunks to avoid large-memory usage.
+    Returns the hex digest string.
+    """
+    import hashlib
+
+    h = hashlib.new(algo)
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
 class ChangeLogger:
     """Logs all file changes for potential rollback."""
     
