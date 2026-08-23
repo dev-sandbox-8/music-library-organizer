@@ -5,11 +5,71 @@ import csv
 import json
 from datetime import datetime
 from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, TCON, TBPM
 from mutagen.mp3 import MP3
 import requests
 import time
 import acoustid
 from core.utils import sanitize_filename, parse_filename, compute_checksum, scan_mp3_files
+
+
+def normalize_genre_list(genres):
+    """Normalize a list of genre values: strip whitespace, dedupe, keep order."""
+    seen = set()
+    result = []
+    for genre in genres:
+        genre = genre.strip()
+        if genre and genre not in seen:
+            seen.add(genre)
+            result.append(genre)
+    return result
+
+
+def extract_genre(mp3_path):
+    """Extract the genre from a file's ID3 TCON frame.
+
+    Handles numeric genre references ("17", "(17)") — mutagen resolves these
+    to their ID3v1 names automatically — as well as plain textual genres.
+
+    Returns the primary genre, or multiple genres joined with "; " if several
+    distinct values are present. Returns None when no TCON frame exists.
+    """
+    try:
+        tags = ID3(mp3_path)
+    except Exception:
+        return None
+
+    tcon_frames = tags.getall('TCON')
+    if not tcon_frames:
+        return None
+
+    genres = normalize_genre_list(tcon_frames[0].genres)
+    if not genres:
+        return None
+    return '; '.join(genres)
+
+
+def extract_bpm(mp3_path):
+    """Extract the BPM from a file's ID3 TBPM frame.
+
+    Returns an int (float values are rounded), or None when the frame is
+    missing or its value is non-numeric.
+    """
+    try:
+        tags = ID3(mp3_path)
+    except Exception:
+        return None
+
+    tbpm_frames = tags.getall('TBPM')
+    if not tbpm_frames:
+        return None
+
+    text = ''.join(tbpm_frames[0].text).strip()
+    try:
+        return round(float(text))
+    except (ValueError, TypeError):
+        return None
+
 
 class ChangeLogger:
     """Logs all file changes for potential rollback."""
