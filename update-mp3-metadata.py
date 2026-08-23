@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 from datetime import datetime
+from pathlib import Path
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, TCON, TBPM
 from mutagen.mp3 import MP3
@@ -170,13 +171,64 @@ class ChangeLogger:
         """Save changes to log file."""
         if not self.changes:
             return
-        
+
         # Save as JSON for easy parsing
+        Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
         with open(self.log_file, 'w', encoding='utf-8') as f:
             json.dump(self.changes, f, indent=2, ensure_ascii=False)
-        
+
         print(f"\nChange log saved to: {self.log_file}")
         print(f"Total changes logged: {len(self.changes)}")
+
+    def save_jsonl(self, history_dir=None):
+        """Append all changes to <log_file>.jsonl, one JSON object per line.
+
+        The JSONL file lives next to the rollback JSON (or inside
+        `history_dir` when given) so per-run history can be tailed/grep'd
+        without parsing the array format. Rollback compatibility is kept:
+        `save()` continues to write the array format unchanged.
+
+        Returns the JSONL path written, or None when there were no changes.
+        """
+        if not self.changes:
+            return None
+
+        target = Path(str(self.log_file) + '.jsonl')
+        if history_dir is not None:
+            target = Path(history_dir) / target.name
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, 'a', encoding='utf-8') as f:
+            for change in self.changes:
+                f.write(json.dumps(change, ensure_ascii=False) + '\n')
+
+        print(f"JSONL change history appended to: {target}")
+        return str(target)
+
+
+def resolve_log_path(history_dir=None, explicit=None, timestamp=None, prefix='changes'):
+    """Decide where a run's change log should be written.
+
+    Precedence: explicit --log path > --history-dir directory > script dir.
+
+    Args:
+        history_dir: Optional directory from --history-dir; the generated
+            filename lands here instead of the script's directory.
+        explicit: Explicit log file path from --log; returned as-is.
+        timestamp: Timestamp string for generated names ('%Y%m%d_%H%M%S');
+            defaults to the current time.
+        prefix: Filename prefix for generated names.
+
+    Returns:
+        A Path to the log file.
+    """
+    if explicit:
+        return Path(explicit)
+
+    stamp = timestamp or datetime.now().strftime('%Y%m%d_%H%M%S')
+    name = f"{prefix}_{stamp}.json"
+    base = Path(history_dir) if history_dir else Path(__file__).resolve().parent
+    return base / name
 
 def rollback_changes(log_file):
     """Rollback changes from a log file."""
@@ -603,6 +655,10 @@ File Organization:
                         help='With --inspect: output CSV instead of a fixed-width table')
     parser.add_argument('--skip-fingerprint', action='store_true',
                         help='Skip AcoustID audio fingerprinting and use text-based lookup only')
+    parser.add_argument('--history-dir', metavar='DIR',
+                        help='Directory for JSONL change-history files (one change per line)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Show detailed progress output')
     
     # If the script is run with no arguments, show help and exit.
     # This helps users discover available CLI options instead of running default behavior.
@@ -634,34 +690,37 @@ File Organization:
     
     # Set up logging
     logger = None
+    history_dir = os.path.expanduser(args.history_dir) if args.history_dir else None
     if not args.dry_run:
-        if args.log:
-            log_file = args.log
-        else:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            log_file = os.path.join(os.path.dirname(__file__) or '.', f'changes_{timestamp}.json')
-        logger = ChangeLogger(log_file)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = resolve_log_path(history_dir=history_dir, explicit=args.log,
+                                    timestamp=timestamp)
+        logger = ChangeLogger(str(log_file))
         print(f"Change log will be saved to: {log_file}")
-    
+
     if args.dry_run:
         print("=" * 60)
         print("DRY RUN MODE - No files will be modified")
         print("=" * 60)
-    
+
     print(f"Processing MP3 files in: {folder}")
     mp3_files = scan_mp3_files(folder)
-    print(f"Found {len(mp3_files)} MP3 file(s)\n")
+    total = len(mp3_files)
+    print(f"Found {total} MP3 file(s)\n")
 
     error_count = 0
-    for mp3_file in mp3_files:
+    for index, mp3_file in enumerate(mp3_files, start=1):
+        if args.verbose:
+            print(f"[{index}/{total}] {os.path.basename(mp3_file)}")
         success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
                                            skip_fingerprint=args.skip_fingerprint)
         if not success:
             error_count += 1
-    
+
     # Save change log
     if logger and not args.dry_run:
         logger.save()
+        logger.save_jsonl(history_dir=history_dir)
     
     if args.dry_run:
         print("\n" + "=" * 60)
