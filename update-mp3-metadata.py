@@ -148,6 +148,29 @@ def run_inspect(folder, fmt='table'):
     print(format_inspect_table(rows, fmt=fmt))
 
 
+def run_batch(folder, **sync_kwargs):
+    """Process every MP3 under `folder` sequentially with progress output.
+
+    Prints a [n/total] counter per file and an end-of-run summary of
+    updated vs. skipped counts. Extra keyword arguments are forwarded to
+    sync_metadata_and_rename() unchanged.
+    """
+    mp3_files = scan_mp3_files(folder)
+    total = len(mp3_files)
+    updated = skipped = 0
+
+    for index, mp3_file in enumerate(mp3_files, start=1):
+        print(f"[{index}/{total}] {os.path.basename(mp3_file)}")
+        success = sync_metadata_and_rename(mp3_file, **sync_kwargs)
+        if success:
+            updated += 1
+        else:
+            skipped += 1
+
+    print(f"\nBatch complete: {updated} updated, {skipped} skipped, {total} total.")
+    return {'updated': updated, 'skipped': skipped, 'total': total}
+
+
 class ChangeLogger:
     """Logs all file changes for potential rollback."""
     
@@ -659,6 +682,8 @@ File Organization:
                         help='Directory for JSONL change-history files (one change per line)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show detailed progress output')
+    parser.add_argument('--batch', action='store_true',
+                        help='Process the whole folder with per-file progress and a summary')
     
     # If the script is run with no arguments, show help and exit.
     # This helps users discover available CLI options instead of running default behavior.
@@ -709,13 +734,18 @@ File Organization:
     print(f"Found {total} MP3 file(s)\n")
 
     error_count = 0
-    for index, mp3_file in enumerate(mp3_files, start=1):
-        if args.verbose:
-            print(f"[{index}/{total}] {os.path.basename(mp3_file)}")
-        success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
-                                           skip_fingerprint=args.skip_fingerprint)
-        if not success:
-            error_count += 1
+    if args.batch:
+        summary = run_batch(folder, dry_run=args.dry_run, logger=logger,
+                            skip_fingerprint=args.skip_fingerprint)
+        error_count = summary['skipped']
+    else:
+        for index, mp3_file in enumerate(mp3_files, start=1):
+            if args.verbose:
+                print(f"[{index}/{total}] {os.path.basename(mp3_file)}")
+            success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
+                                               skip_fingerprint=args.skip_fingerprint)
+            if not success:
+                error_count += 1
 
     # Save change log
     if logger and not args.dry_run:
