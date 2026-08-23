@@ -9,49 +9,7 @@ from mutagen.mp3 import MP3
 import requests
 import time
 import acoustid
-
-def sanitize_filename(filename):
-    """Replace invalid filename characters with safe alternatives."""
-    # Dictionary of replacements
-    replacements = {
-        '/': '_',
-        '\\': '_',
-        ':': ' -',
-        '*': '',
-        '?': '',
-        '"': "'",
-        '<': '',
-        '>': '',
-        '|': '-'
-    }
-    
-    for char, replacement in replacements.items():
-        filename = filename.replace(char, replacement)
-    
-    # Remove leading/trailing spaces and dots (Windows doesn't like these)
-    filename = filename.strip('. ')
-    
-    # Limit length (leave room for path and .mp3 extension)
-    max_length = 240
-    if len(filename) > max_length:
-        # Try to truncate at a word boundary
-        filename = filename[:max_length].rsplit(' ', 1)[0]
-    
-    return filename
-
-def compute_checksum(file_path, algo='sha256'):
-    """Compute a checksum for a file to help verify content retention.
-
-    Reads the file in chunks to avoid large-memory usage.
-    Returns the hex digest string.
-    """
-    import hashlib
-
-    h = hashlib.new(algo)
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
-            h.update(chunk)
-    return h.hexdigest()
+from core.utils import sanitize_filename, parse_filename, compute_checksum, scan_mp3_files
 
 class ChangeLogger:
     """Logs all file changes for potential rollback."""
@@ -164,34 +122,6 @@ def rollback_changes(log_file):
     print(f"  Errors: {error_count}")
     
     return error_count == 0
-
-def scan_mp3_files(folder):
-    mp3_files = []
-    for root, _, files in os.walk(folder):
-        for file in files:
-            if file.lower().endswith('.mp3'):
-                mp3_files.append(os.path.join(root, file))
-    return mp3_files
-
-def parse_filename(filename):
-    # Example: "AlbumArtist - Album - Song.mp3" or "01 - Song.mp3"
-    base = os.path.splitext(os.path.basename(filename))[0]
-    parts = base.split(' - ')
-    
-    # Check if first part is a track number (1-3 digits)
-    result = {}
-    if len(parts) >= 1 and parts[0].strip().isdigit() and len(parts[0].strip()) <= 3:
-        result['tracknumber'] = parts[0].strip()
-        if len(parts) >= 2:
-            result['title'] = parts[1]
-        return result
-    
-    if len(parts) == 3:
-        # Use the first part as albumartist (keeps albums together)
-        return {'albumartist': parts[0], 'album': parts[1], 'title': parts[2]}
-    elif len(parts) == 2:
-        return {'albumartist': parts[0], 'title': parts[1]}
-    return {}
 
 def query_acoustid(mp3_path):
     """Use audio fingerprinting to identify a song from its audio data."""
