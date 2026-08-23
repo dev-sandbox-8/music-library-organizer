@@ -370,7 +370,7 @@ def query_itunes_api(artist=None, title=None, album=None):
         print(f"Warning: iTunes API lookup failed for search '{params['term']}': {e}")
         return {'_error': str(e)}
 
-def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
+def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerprint=False):
     try:
         audio = MP3(mp3_path, ID3=EasyID3)
     except Exception:
@@ -408,7 +408,8 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None):
             needs_lookup = True
             break
     
-    if needs_lookup:
+    if needs_lookup and not skip_fingerprint:
+        print(f"Attempting audio fingerprint identification for {os.path.basename(mp3_path)}...")
         print(f"Attempting audio fingerprint identification for {os.path.basename(mp3_path)}...")
         acoustid_result = query_acoustid(mp3_path)
         
@@ -600,6 +601,8 @@ File Organization:
                         help='Print an audit table of ID3 tags in each MP3 (no modifications)')
     parser.add_argument('--csv', action='store_true',
                         help='With --inspect: output CSV instead of a fixed-width table')
+    parser.add_argument('--skip-fingerprint', action='store_true',
+                        help='Skip AcoustID audio fingerprinting and use text-based lookup only')
     
     # If the script is run with no arguments, show help and exit.
     # This helps users discover available CLI options instead of running default behavior.
@@ -651,7 +654,8 @@ File Organization:
 
     error_count = 0
     for mp3_file in mp3_files:
-        success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger)
+        success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
+                                           skip_fingerprint=args.skip_fingerprint)
         if not success:
             error_count += 1
     
