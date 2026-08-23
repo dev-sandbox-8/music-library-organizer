@@ -3,6 +3,7 @@ import sys
 import argparse
 import csv
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from mutagen.easyid3 import EasyID3
@@ -169,6 +170,75 @@ def run_batch(folder, **sync_kwargs):
 
     print(f"\nBatch complete: {updated} updated, {skipped} skipped, {total} total.")
     return {'updated': updated, 'skipped': skipped, 'total': total}
+
+
+# MusicBrainz web-service base URL (ws/2, JSON responses).
+MUSICBRAINZ_API = 'https://musicbrainz.org/ws/2'
+
+# Minimum seconds between MusicBrainz requests (their policy is 1 req/s).
+MUSICBRAINZ_MIN_INTERVAL = 1.0
+
+# Matches canonical UUIDs used for MusicBrainz IDs.
+_MBID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+
+def extract_mbid(tag_values):
+    """Pull an artist MBID out of raw tag values.
+
+    Args:
+        tag_values: Mapping of tag name -> list of string values (e.g. a
+            TXXX frame dict or ID3 comment). Values carrying an explicit
+            "MBID:" prefix are trusted as-is; bare values are only
+            accepted when they look like a UUID (avoids false positives).
+
+    Returns:
+        The MBID string, or None when absent/invalid.
+    """
+    for values in tag_values.values():
+        for value in values or []:
+            value = value.strip()
+            if value.upper().startswith('MBID:'):
+                return value.split(':', 1)[1].strip() or None
+            if _MBID_RE.match(value):
+                return value.lower()
+    return None
+
+
+def query_musicbrainz_artist(mbid):
+    """Resolve an artist MBID via the MusicBrainz ws/2 API.
+
+    Fetches the artist record including aliases; the first English
+    "Legal name" alias becomes `real_name` (stage -> real name resolution).
+
+    Returns:
+        A dict with keys `mb_artist_id`, `name`, and `real_name` (None when
+        no legal-name alias exists), plus `_error` on failure.
+    """
+    url = f"{MUSICBRAINZ_API}/artist/{mbid}"
+    params = {'fmt': 'json', 'inc': 'aliases'}
+    try:
+        resp = requests.get(url, params=params,
+                            headers={"User-Agent": "mp3-metadata-poc/1.0"},
+                            timeout=10)
+        time.sleep(MUSICBRAINZ_MIN_INTERVAL)  # honor 1 req/s policy
+        if resp.status_code != 200:
+            return {'_error': f"HTTP {resp.status_code}"}
+        data = resp.json()
+    except Exception as e:
+        return {'_error': str(e)}
+
+    real_name = None
+    for alias in data.get('aliases', []):
+        if alias.get('type') == 'Legal name' and alias.get('locale') in (None, 'en'):
+            real_name = alias.get('name')
+            break
+
+    return {
+        'mb_artist_id': data.get('id'),
+        'name': data.get('name'),
+        'real_name': real_name,
+    }
 
 
 class ChangeLogger:
@@ -338,11 +408,11 @@ def query_acoustid(mp3_path):
     """Use audio fingerprinting to identify a song from its audio data."""
     # AcoustID API key (public test key - replace with your own for production)
     api_key = 'cSpUJKpD'
-    
+
     try:
         # Generate fingerprint and query AcoustID
         results = acoustid.match(api_key, mp3_path, meta='recordings releasegroups')
-        
+
         for score, recording_id, title, artist in results:
             # Return the first result with a decent confidence score
             if score > 0.5:  # 50% confidence threshold
@@ -353,9 +423,10 @@ def query_acoustid(mp3_path):
                     # Query MusicBrainz for more details
                     mb_url = f"https://musicbrainz.org/ws/2/recording/{recording_id}"
                     params = {'fmt': 'json', 'inc': 'releases+artist-credits'}
-                    resp = requests.get(mb_url, params=params, 
+                    resp = requests.get(mb_url, params=params,
                                       headers={"User-Agent": "mp3-metadata-poc/1.0"},
                                       timeout=10)
+                    time.sleep(MUSICBRAINZ_MIN_INTERVAL)  # honor 1 req/s policy
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get('releases') and len(data['releases']) > 0:
@@ -364,7 +435,7 @@ def query_acoustid(mp3_path):
                             # Get album artist from release
                             if release.get('artist-credit'):
                                 albumartist = release['artist-credit'][0]['name']
-                        
+
                         # Try to get track number from the recording
                         tracknumber = None
                         if data.get('releases') and len(data['releases']) > 0:
@@ -377,8 +448,8 @@ def query_acoustid(mp3_path):
                                         break
                 except:
                     pass
-                
-                return {
+
+                result = {
                     'artist': artist,
                     'albumartist': albumartist or artist,  # Fall back to track artist
                     'title': title,
@@ -386,6 +457,26 @@ def query_acoustid(mp3_path):
                     'tracknumber': tracknumber,
                     'confidence': score
                 }
+
+                # Feature B: when the recording's artist credit carries an MBID,
+                # enrich results with the MusicBrainz artist record (real name etc.)
+                try:
+                    mb_artist_id = None
+                    if data.get('artist-credit'):
+                        mb_artist_id = data['artist-credit'][0].get('artist', {}).get('id')
+                except Exception:
+                    mb_artist_id = None
+
+                if mb_artist_id:
+                    time.sleep(MUSICBRAINZ_MIN_INTERVAL)  # stay under 1 req/s
+                    artist_info = query_musicbrainz_artist(mb_artist_id)
+                    if '_error' not in artist_info:
+                        result['mb_artist_id'] = artist_info['mb_artist_id']
+                        if artist_info.get('real_name'):
+                            print(f"  ℹ {artist_info['name']} performs as '{artist}', real name: {artist_info['real_name']}")
+                            result['real_name'] = artist_info['real_name']
+
+                return result
     except acoustid.NoBackendError:
         print(f"Error: chromaprint/fpcalc not found. Install with: brew install chromaprint")
         return {'_error': 'No backend'}
