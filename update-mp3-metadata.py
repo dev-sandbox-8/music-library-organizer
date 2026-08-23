@@ -531,6 +531,12 @@ File Organization:
     parser.add_argument('--rollback', metavar='LOG_FILE', help='Rollback changes from specified log file')
     parser.add_argument('--log', metavar='LOG_FILE', help='Custom log file path (default: auto-generated)')
     
+    # If the script is run with no arguments, show help and exit.
+    # This helps users discover available CLI options instead of running default behavior.
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     args = parser.parse_args()
     
     # Handle rollback mode
