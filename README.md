@@ -6,8 +6,10 @@ This script automatically syncs MP3 file metadata by:
 1. Extracting information from filenames
 2. **Using audio fingerprinting (AcoustID) to identify songs from their audio data**
 3. Querying online music databases (iTunes API) as fallback for missing metadata
-4. Updating ID3 tags in MP3 files
-5. **Organizing files into a folder structure: `<Artist>/<Album>/<Track Number> - <Track Name>.mp3`**
+4. Enriching artist data via **MusicBrainz** (stage-name → real-name resolution)
+5. **Optionally fetching and embedding cover art** via Discogs
+6. Updating ID3 tags in MP3 files
+7. **Organizing files into a folder structure: `<Artist>/<Album>/<Track Number> - <Track Name>.mp3`**
 
 ## Filename Format
 
@@ -89,6 +91,18 @@ Examples:
 **Why iTunes API?**
 The script originally used MusicBrainz but switched to iTunes API due to SSL/TLS compatibility issues between the Python SSL library and MusicBrainz servers.
 
+### 4b. **Artist Enrichment** (`query_musicbrainz_artist`, `extract_mbid`)
+- When a recording carries an artist MBID (from AcoustID's MusicBrainz link), the script enriches results with the MusicBrainz artist record.
+- `extract_mbid()` pulls an artist MBID from tag values shaped like `MBID: <uuid>` or a bare UUID.
+- `query_musicbrainz_artist()` fetches the artist via the MusicBrainz ws/2 API and resolves **stage names → real names** using the artist's "Legal name" alias (e.g. Elton John → Elton Hercules John).
+- Honors MusicBrainz's 1 request/second policy (a `time.sleep(1)` after every request) and sends the required `User-Agent` header.
+
+### 4c. **Cover Art** (`query_discogs_cover`, `download_image`, `embed_cover_art`)
+- **Opt-in** via `--fetch-cover` so default behavior is unchanged.
+- `query_discogs_cover()` searches Discogs for the highest-resolution cover using a Discogs token (`--discogs-token` or `DISCOGS_TOKEN` env var).
+- `download_image()` fetches the artwork with a ~1 MB size cap to avoid pulling huge scans.
+- `embed_cover_art()` writes the image as a front-cover `APIC` ID3 frame, replacing any existing cover while preserving other tags.
+
 ### 4. **Metadata Sync and Rename** (`sync_metadata_and_rename`)
 
 This is the main processing function that:
@@ -123,12 +137,13 @@ This is the main processing function that:
 ## Technical Details
 
 ### Requirements
-- Python 3.14 (with OpenSSL support)
+- Python 3.9+ (with OpenSSL support)
 - `mutagen` library for MP3 metadata handling
 - `requests` library for API calls
 - `pyacoustid` library for audio fingerprinting
 - `chromaprint` (fpcalc) for generating audio fingerprints
 - `pytest` for running tests (development)
+- A Discogs personal-access token (only for `--fetch-cover`)
 
 ### Content Verification
 The script includes a `compute_checksum()` function that uses SHA256 hashing to verify file content is preserved during operations. This ensures audio data remains unchanged when metadata is updated or files are renamed.
@@ -138,39 +153,30 @@ The script includes a `compute_checksum()` function that uses SHA256 hashing to 
 # Install chromaprint (required for audio fingerprinting)
 brew install chromaprint
 
-# Create virtual environment
-python3 -m venv venv
-
-# Activate virtual environment
-source venv/bin/activate
-
 # Install Python dependencies
-pip install mutagen requests pyacoustid
+pip3 install --user mutagen requests pyacoustid
+
+# (Optional) set your Discogs token for --fetch-cover
+export DISCOGS_TOKEN="your-token-here"
 ```
 
 ### Usage
 
 #### Process Default Folder
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Run the script (processes ~/mp3-metadata-poc by default)
-python "update-mp3-metadata.py"
+python3 update-mp3-metadata.py
 ```
 
 #### Target a Specific Folder
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Process a specific folder
-python "update-mp3-metadata.py" /path/to/your/music/folder
+python3 update-mp3-metadata.py /path/to/your/music/folder
 
 # Examples:
-python "update-mp3-metadata.py" ~/Music/iTunes
-python "update-mp3-metadata.py" "/Users/username/My Music Collection"
-python "update-mp3-metadata.py" .
+python3 update-mp3-metadata.py ~/Music/iTunes
+python3 update-mp3-metadata.py "/Users/username/My Music Collection"
+python3 update-mp3-metadata.py .
 ```
 
 The script will:
@@ -179,14 +185,54 @@ The script will:
 - Process each file and show progress
 - Display a completion message when done
 
+#### Preview Changes (Dry Run)
+```bash
+python3 update-mp3-metadata.py ~/Music --dry-run
+```
+
+#### Inspect Existing Tags
+```bash
+# Fixed-width audit table (read-only)
+python3 update-mp3-metadata.py ~/Music --inspect
+
+# CSV output
+python3 update-mp3-metadata.py ~/Music --inspect --csv
+```
+
+#### Skip Audio Fingerprinting
+```bash
+# Use filename parsing + iTunes text lookup only
+python3 update-mp3-metadata.py ~/Music --skip-fingerprint
+```
+
+#### Batch Mode
+```bash
+# Per-file progress counter + end-of-run summary
+python3 update-mp3-metadata.py ~/Music --batch
+```
+
+#### Fetch & Embed Cover Art (Opt-in)
+```bash
+# Requires a Discogs token (--discogs-token or DISCOGS_TOKEN env var)
+python3 update-mp3-metadata.py ~/Music --fetch-cover --discogs-token "your-token"
+```
+
+#### Verbose + Change History
+```bash
+# Detailed progress output
+python3 update-mp3-metadata.py ~/Music --verbose
+
+# Write a JSONL change-history in addition to the default JSON changelog
+python3 update-mp3-metadata.py ~/Music --history-dir ./history
+```
+
 ### Run Tests
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run the test suite
-pytest -q
+# Run the full test suite
+python3 -m pytest -q
 ```
+
+The suite mocks all network access (MusicBrainz, Discogs, iTunes, AcoustID) so it runs offline and does not require API tokens.
 
 The test suite verifies:
 - File content preservation (checksum verification)
@@ -267,3 +313,9 @@ Possible improvements:
 - ✅ Filename sanitization for invalid characters
 - ✅ Content verification via checksums
 - ✅ Test framework for protecting features
+- ✅ `--inspect` read-only ID3 tag audit (table + CSV)
+- ✅ `--skip-fingerprint` to skip AcoustID and use text lookup only
+- ✅ JSONL change history (`--history-dir`) + verbose output (`--verbose`)
+- ✅ `--batch` mode with per-file progress and summary
+- ✅ MusicBrainz artist lookup with stage-name → real-name resolution
+- ✅ Cover-art fetch & embed via Discogs (`--fetch-cover`, APIC frame)

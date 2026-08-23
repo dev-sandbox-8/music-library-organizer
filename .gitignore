@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Session / local artifacts
+STATUS.md
+agent-output/
+changes_*.json
+
+# Virtual environments
+venv/
+.venv/
+
+# Test/scratch output
+*.jsonl

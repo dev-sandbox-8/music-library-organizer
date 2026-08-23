@@ -14,6 +14,29 @@ import time
 import acoustid
 from core.utils import sanitize_filename, parse_filename, compute_checksum, scan_mp3_files
 
+# =============================================================================
+# Changelog
+# -----------------------------------------------------------------------------
+# - Audio fingerprinting via AcoustID/Chromaprint, with iTunes text lookup as a
+#   fallback for missing metadata; metadata + file reorganization into
+#   Artist/Album/<track> - <title>.mp3.
+# - --dry-run: preview all changes without touching files.
+# - --rollback <log>: undo renames/moves recorded by the JSON changelog.
+# - --inspect [--csv]: read-only audit of ID3 tags (no modifications).
+# - --skip-fingerprint: skip AcoustID, use filename parsing + iTunes only.
+# - --history-dir <dir> + --verbose: JSONL change-history (one change/line)
+#   alongside the default JSON changelog, plus detailed progress output.
+# - --batch: process a whole folder with per-file progress and a summary.
+# - MusicBrainz artist lookup (extract_mbid / query_musicbrainz_artist):
+#   stage-name -> real-name resolution via the "Legal name" alias; honors the
+#   1 req/s policy and required User-Agent. Wired into AcoustID results.
+# - Cover art (--fetch-cover): Discogs search (query_discogs_cover), capped
+#   download (download_image, ~1 MB), embedded as a front-cover APIC frame
+#   (embed_cover_art). Opt-in so default behavior is unchanged.
+# All new features respect --dry-run; default behavior is unchanged when flags
+# are absent.
+# =============================================================================
+
 
 def normalize_genre_list(genres):
     """Normalize a list of genre values: strip whitespace, dedupe, keep order."""
