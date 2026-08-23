@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, TCON, TBPM
+from mutagen.id3 import ID3, TCON, TBPM, APIC
 from mutagen.mp3 import MP3
 import requests
 import time
@@ -239,6 +239,134 @@ def query_musicbrainz_artist(mbid):
         'name': data.get('name'),
         'real_name': real_name,
     }
+
+
+# Discogs web-service base URL (JSON responses).
+DISCOGS_API = 'https://api.discogs.com'
+
+# Cap on downloaded artwork size (~1MB) to avoid pulling huge scans.
+MAX_IMAGE_BYTES = 1024 * 1024
+
+
+def query_discogs_cover(artist, album, token=None):
+    """Find the highest-resolution cover-art URL for an album on Discogs.
+
+    Args:
+        artist: Album artist name to search for.
+        album: Album title to search for.
+        token: Discogs personal-access token (required by their API).
+
+    Returns:
+        The best cover_image URL, or None when nothing found / on error.
+    """
+    if not artist or not album or not token:
+        return None
+
+    url = f"{DISCOGS_API}/database/search"
+    params = {'artist': artist, 'title': album, 'type': 'release',
+              'per_page': 5}
+    headers = {
+        "User-Agent": "mp3-metadata-poc/1.0",
+        "Authorization": f"Discogs token={token}",
+    }
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            print(f"Warning: Discogs search failed with HTTP {resp.status_code}")
+            return None
+        results = resp.json().get('results', [])
+    except Exception as e:
+        print(f"Warning: Discogs search failed: {e}")
+        return None
+
+    # Prefer the largest available image across the top few matches.
+    def image_area(result):
+        image = result.get('cover_image') or {}
+        return (image.get('width') or 0) * (image.get('height') or 0)
+
+    best_url = None
+    for result in sorted(results, key=image_area, reverse=True):
+        image = result.get('cover_image') or {}
+        if image.get('resource_url'):
+            best_url = image['resource_url']
+            break
+    return best_url
+
+
+def download_image(url, max_bytes=MAX_IMAGE_BYTES):
+    """Download raw image bytes from `url`, enforcing a size cap.
+
+    Returns:
+        Image bytes, or None when oversized / on error.
+    """
+    try:
+        resp = requests.get(url, headers={"User-Agent": "mp3-metadata-poc/1.0"},
+                            timeout=30)
+        if resp.status_code != 200:
+            print(f"Warning: image download failed with HTTP {resp.status_code}")
+            return None
+        if len(resp.content) > max_bytes:
+            print(f"Warning: skipping image ({len(resp.content)} bytes "
+                  f"exceeds {max_bytes}-byte cap)")
+            return None
+        return resp.content
+    except Exception as e:
+        print(f"Warning: image download failed: {e}")
+        return None
+
+
+def embed_cover_art(mp3_path, image_data):
+    """Embed `image_data` as the front-cover APIC frame of an MP3.
+
+    Replaces any existing front-cover frame so stale art is not kept.
+    Other tags are preserved.
+
+    Returns:
+        True when saved successfully, False otherwise.
+    """
+    try:
+        tags = ID3(mp3_path)
+        tags.delall('APIC')
+        tags.add(APIC(encoding=3, mime='image/jpeg', type=3,
+                      desc='Cover', data=image_data))
+        tags.save(mp3_path, v1=0, v2_version=3)
+        return True
+    except Exception as e:
+        print(f"Warning: could not embed cover art in {os.path.basename(mp3_path)}: {e}")
+        return False
+
+
+def fetch_cover_and_embed(mp3_path, artist=None, album=None, dry_run=False,
+                          discogs_token=None, enabled=False):
+    """Look up and embed cover art for one MP3 (Feature C orchestrator).
+
+    Disabled unless explicitly requested (`enabled=True`, wired to
+    --fetch-cover), so default behavior stays unchanged. Never writes in
+    dry-run mode.
+
+    Returns:
+        True when art was fetched and embedded, False when a lookup/download
+        failed while enabled, None when disabled/skipped (no album, etc.).
+    """
+    if not enabled:
+        return None
+    if not album or album in ['Unknown', 'not found']:
+        return None
+    if not artist or artist in ['Unknown', 'not found']:
+        artist = None
+
+    url = query_discogs_cover(artist, album, token=discogs_token)
+    if not url:
+        return False
+
+    image_data = download_image(url)
+    if not image_data:
+        return False
+
+    if dry_run:
+        print(f"[DRY RUN] Would embed cover art in: {os.path.basename(mp3_path)}")
+        return None
+    return embed_cover_art(mp3_path, image_data)
 
 
 class ChangeLogger:
@@ -536,7 +664,8 @@ def query_itunes_api(artist=None, title=None, album=None):
         print(f"Warning: iTunes API lookup failed for search '{params['term']}': {e}")
         return {'_error': str(e)}
 
-def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerprint=False):
+def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerprint=False,
+                              fetch_cover=False, discogs_token=None):
     try:
         audio = MP3(mp3_path, ID3=EasyID3)
     except Exception:
@@ -575,7 +704,6 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerpr
             break
     
     if needs_lookup and not skip_fingerprint:
-        print(f"Attempting audio fingerprint identification for {os.path.basename(mp3_path)}...")
         print(f"Attempting audio fingerprint identification for {os.path.basename(mp3_path)}...")
         acoustid_result = query_acoustid(mp3_path)
         
@@ -735,6 +863,25 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerpr
         except Exception as e:
             print(f"Error: Failed to move {mp3_path}: {e}")
             return False
+
+    # Feature C: fetch & embed cover art (opt-in via --fetch-cover so default
+    # behavior is unchanged). Operates on the final file location.
+    final_path = new_path if mp3_path != new_path else mp3_path
+    if fetch_cover:
+        cover_ok = fetch_cover_and_embed(
+            final_path,
+            artist=audio.get('albumartist', [None])[0] or audio.get('artist', [None])[0],
+            album=audio.get('album', [None])[0],
+            dry_run=dry_run,
+            discogs_token=discogs_token,
+            enabled=True,
+        )
+        if cover_ok is True:
+            print(f"Embedded cover art in: {os.path.basename(final_path)}")
+        elif cover_ok is False:
+            print(f"Warning: cover art lookup failed for {os.path.basename(final_path)}")
+        # None -> skipped (disabled/dry-run/no album); nothing to report.
+
     return True
 
 if __name__ == "__main__":
@@ -775,7 +922,13 @@ File Organization:
                         help='Show detailed progress output')
     parser.add_argument('--batch', action='store_true',
                         help='Process the whole folder with per-file progress and a summary')
-    
+    parser.add_argument('--fetch-cover', action='store_true',
+                        help='Fetch and embed cover art via Discogs (opt-in; requires DISCOGS_TOKEN)')
+    parser.add_argument('--discogs-token', metavar='TOKEN',
+                        help='Discogs personal-access token for --fetch-cover '
+                             '(falls back to DISCOGS_TOKEN env var)')
+
+
     # If the script is run with no arguments, show help and exit.
     # This helps users discover available CLI options instead of running default behavior.
     if len(sys.argv) == 1:
@@ -814,6 +967,8 @@ File Organization:
         logger = ChangeLogger(str(log_file))
         print(f"Change log will be saved to: {log_file}")
 
+    discogs_token = args.discogs_token or os.environ.get('DISCOGS_TOKEN')
+
     if args.dry_run:
         print("=" * 60)
         print("DRY RUN MODE - No files will be modified")
@@ -827,14 +982,18 @@ File Organization:
     error_count = 0
     if args.batch:
         summary = run_batch(folder, dry_run=args.dry_run, logger=logger,
-                            skip_fingerprint=args.skip_fingerprint)
+                            skip_fingerprint=args.skip_fingerprint,
+                            fetch_cover=args.fetch_cover,
+                            discogs_token=discogs_token)
         error_count = summary['skipped']
     else:
         for index, mp3_file in enumerate(mp3_files, start=1):
             if args.verbose:
                 print(f"[{index}/{total}] {os.path.basename(mp3_file)}")
             success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
-                                               skip_fingerprint=args.skip_fingerprint)
+                                               skip_fingerprint=args.skip_fingerprint,
+                                               fetch_cover=args.fetch_cover,
+                                               discogs_token=discogs_token)
             if not success:
                 error_count += 1
 
