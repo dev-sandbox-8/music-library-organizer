@@ -259,6 +259,40 @@ Each test file includes comprehensive documentation describing:
 - Testing approach (unit vs integration)
 - Expected behavior and edge cases
 
+## Web App
+
+A local web app wraps the same engine with a SQLite-backed library index,
+duplicate cleanup, and a **review-first** suggestion queue. Nothing is ever
+applied without your explicit approval.
+
+```bash
+# Start the server (binds to 127.0.0.1:8000 only — never exposed beyond localhost)
+source venv/bin/activate
+python app.py
+# then open http://127.0.0.1:8000
+```
+
+Three tabs:
+
+- **Library** — scan a folder into the index (`library.db`), browse/search with
+  pagination, play files inline.
+- **Duplicates** — clusters candidates by tags, filename, and checksum; pick a
+  keeper per cluster ("Delete others" → OS Trash) or "Keep all / dismiss".
+- **Suggestions** — pending metadata proposals (filename parse → AcoustID →
+  iTunes) shown as editable cards with source badges and confidence; edit,
+  approve/reject individually or in batch, then "Apply approved".
+
+Safety model:
+
+- Every tag write / rename / delete appends to the same `changes_*.json`
+  format the CLI uses — `python update-mp3-metadata.py --rollback <log>` keeps
+  working on web-app batches.
+- Deletions always go to the OS Trash via `send2trash`; nothing is permanently
+  deleted, and nothing is auto-deleted.
+- Applying renames refuses to overwrite existing target paths (reported as
+  conflicts; the file stays put and the suggestion stays approved).
+- The CLI continues to work unchanged off the shared `core/` package.
+
 ## Workflow Example
 
 ### Before:

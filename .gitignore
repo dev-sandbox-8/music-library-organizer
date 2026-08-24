@@ -13,3 +13,6 @@ venv/
 
 # Test/scratch output
 *.jsonl
+
+# Web app local index
+library.db
