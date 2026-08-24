@@ -14,6 +14,7 @@ import time
 import acoustid
 from core.utils import sanitize_filename, parse_filename, compute_checksum, scan_mp3_files
 from core.lookups import query_acoustid, query_itunes_api, query_musicbrainz_artist
+from core.changelog import ChangeLogger
 
 # =============================================================================
 # Changelog
@@ -351,64 +352,6 @@ def fetch_cover_and_embed(mp3_path, artist=None, album=None, dry_run=False,
     return embed_cover_art(mp3_path, image_data)
 
 
-class ChangeLogger:
-    """Logs all file changes for potential rollback."""
-    
-    def __init__(self, log_file):
-        self.log_file = log_file
-        self.changes = []
-        
-    def log_change(self, original_path, new_path, old_metadata, new_metadata, operation='rename'):
-        """Record a change."""
-        change = {
-            'timestamp': datetime.now().isoformat(),
-            'operation': operation,
-            'original_path': original_path,
-            'new_path': new_path,
-            'old_metadata': old_metadata,
-            'new_metadata': new_metadata
-        }
-        self.changes.append(change)
-    
-    def save(self):
-        """Save changes to log file."""
-        if not self.changes:
-            return
-
-        # Save as JSON for easy parsing
-        Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
-        with open(self.log_file, 'w', encoding='utf-8') as f:
-            json.dump(self.changes, f, indent=2, ensure_ascii=False)
-
-        print(f"\nChange log saved to: {self.log_file}")
-        print(f"Total changes logged: {len(self.changes)}")
-
-    def save_jsonl(self, history_dir=None):
-        """Append all changes to <log_file>.jsonl, one JSON object per line.
-
-        The JSONL file lives next to the rollback JSON (or inside
-        `history_dir` when given) so per-run history can be tailed/grep'd
-        without parsing the array format. Rollback compatibility is kept:
-        `save()` continues to write the array format unchanged.
-
-        Returns the JSONL path written, or None when there were no changes.
-        """
-        if not self.changes:
-            return None
-
-        target = Path(str(self.log_file) + '.jsonl')
-        if history_dir is not None:
-            target = Path(history_dir) / target.name
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with open(target, 'a', encoding='utf-8') as f:
-            for change in self.changes:
-                f.write(json.dumps(change, ensure_ascii=False) + '\n')
-
-        print(f"JSONL change history appended to: {target}")
-        return str(target)
-
-
 def resolve_log_path(history_dir=None, explicit=None, timestamp=None, prefix='changes'):
     """Decide where a run's change log should be written.
 
@@ -462,6 +405,11 @@ def rollback_changes(log_file):
     
     # Process in reverse order
     for change in reversed(changes):
+        operation = change.get('operation', 'rename')
+        if operation == 'delete':
+            print(f"Skipping delete entry (restore manually from trash): "
+                  f"{change.get('original_path', 'unknown')}")
+            continue
         try:
             new_path = change['new_path']
             original_path = change['original_path']
@@ -854,9 +802,13 @@ File Organization:
             if not success:
                 error_count += 1
 
-    # Save change log
+    # Save change log (core save() is silent — print here so CLI output keeps
+    # reporting where the rollback log landed)
     if logger and not args.dry_run:
-        logger.save()
+        saved_path = logger.save()
+        if saved_path:
+            print(f"\nChange log saved to: {saved_path}")
+            print(f"Total changes logged: {len(logger.changes)}")
         logger.save_jsonl(history_dir=history_dir)
     
     if args.dry_run:
