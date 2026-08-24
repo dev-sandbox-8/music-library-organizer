@@ -82,7 +82,9 @@ def scan_mp3_files(folder):
 def parse_filename(filename):
     """Parse an MP3 filename into metadata components.
 
-    Handles two formats:
+    Handles these formats:
+      - "Artist - Album - NN - Title.mp3" → albumartist=Artist, album=Album,
+        tracknumber=NN (when third part numeric), title=Title
       - "NN - Title.mp3"  → tracknumber=NN, title=Title
       - "Artist - Album - Title.mp3" → albumartist=Artist, album=Album, title=Title
       - "Artist - Title.mp3"         → albumartist=Artist, title=Title
@@ -105,7 +107,17 @@ def parse_filename(filename):
             result['title'] = parts[1]
         return result
 
-    if len(parts) == 3:
+    if len(parts) == 4:
+        # "Artist - Album - NN - Title": third part may be a track number
+        parsed = {'albumartist': parts[0], 'album': parts[1]}
+        if parts[2].strip().isdigit() and len(parts[2].strip()) <= 3:
+            parsed['tracknumber'] = parts[2].strip()
+        else:
+            parsed['title'] = f"{parts[2]} - {parts[3]}"
+            return parsed
+        parsed['title'] = parts[3]
+        return parsed
+    elif len(parts) == 3:
         # Use the first part as albumartist (keeps albums together)
         return {'albumartist': parts[0], 'album': parts[1], 'title': parts[2]}
     elif len(parts) == 2:

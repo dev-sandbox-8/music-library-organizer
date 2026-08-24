@@ -74,7 +74,7 @@ def _track_calls(monkeypatch, itunes_result):
     """Wire recording stubs over query_acoustid / query_itunes_api."""
     calls = {'acoustid': 0}
 
-    def fake_acoustid(path):
+    def fake_acoustid(path, api_key=None):
         calls['acoustid'] += 1
         return {
             'artist': 'Fingerprint Artist',
@@ -128,7 +128,7 @@ class TestSkipFingerprint:
 
         calls = {'acoustid': 0}
         monkeypatch.setattr(module, 'query_acoustid',
-                            lambda p: calls.__setitem__('acoustid', calls['acoustid'] + 1) or {})
+                            lambda p, api_key=None: calls.__setitem__('acoustid', calls['acoustid'] + 1) or {})
         monkeypatch.setattr(module, 'query_itunes_api', fake_itunes)
 
         success = module.sync_metadata_and_rename(str(src), dry_run=False,

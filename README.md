@@ -9,38 +9,38 @@ This script automatically syncs MP3 file metadata by:
 4. Enriching artist data via **MusicBrainz** (stage-name → real-name resolution)
 5. **Optionally fetching and embedding cover art** via Discogs
 6. Updating ID3 tags in MP3 files
-7. **Organizing files into a folder structure: `<Artist>/<Album>/<Track Number> - <Track Name>.mp3`**
+7. **Organizing files into a folder structure: `<Artist>/<Album>/Artist - Album - <Track Number> - <Track Name>.mp3`**
 
 ## Filename Format
 
-The script organizes files into a hierarchical folder structure:
+The script organizes files into a hierarchical folder structure where each filename carries its full context (self-describing and portable if files are ever moved out of the folder hierarchy):
 ```
-<Artist>/<Album>/<Track Number> - <Track Name>.mp3
+<Artist>/<Album>/<Artist> - <Album> - <Track Number> - <Track Name>.mp3
 ```
 
 Examples:
 ```
 Coldplay/
   Parachutes/
-    01 - Don't Panic.mp3
-    02 - Shiver.mp3
-    03 - Spies.mp3
-    04 - Sparks.mp3
-    05 - Yellow.mp3
+    Coldplay - Parachutes - 01 - Don't Panic.mp3
+    Coldplay - Parachutes - 02 - Shiver.mp3
+    ...
+    Coldplay - Parachutes - 05 - Yellow.mp3
     ...
 
 The Beatles/
   Abbey Road/
-    01 - Come Together.mp3
-    02 - Something.mp3
+    The Beatles - Abbey Road - 01 - Come Together.mp3
+    The Beatles - Abbey Road - 02 - Something.mp3
     ...
 ```
 
-Track numbers are automatically zero-padded to 2 digits (01, 02, etc.). If a track number is not available, the file is named with just the track title.
+Track numbers are automatically zero-padded to 2 digits (01, 02, etc.). If a track number is not available, the file is named `<Artist> - <Album> - <Track Name>.mp3`.
 
 ### Input Filename Recognition
 
 The script can also parse metadata from input filenames in these formats:
+- `AlbumArtist - Album - TrackNumber - Song.mp3` (e.g., `Coldplay - Parachutes - 05 - Yellow.mp3`)
 - `AlbumArtist - Album - Song.mp3`
 - `AlbumArtist - Song.mp3`
 - `TrackNumber - Song.mp3` (e.g., `01 - Yellow.mp3`)
@@ -52,9 +52,9 @@ The script can also parse metadata from input filenames in these formats:
 - For regular albums, Album Artist usually matches the main artist
 
 Examples:
-- `Coldplay/Parachutes/05 - Yellow.mp3` (regular album)
-- `Various Artists/8 Mile Soundtrack/01 - Lose Yourself.mp3` (compilation)
-- `Linkin Park/Collision Course/06 - Numb_Encore.mp3` (collaboration album)
+- `Coldplay/Parachutes/Coldplay - Parachutes - 05 - Yellow.mp3` (regular album)
+- `Various Artists/8 Mile Soundtrack/Various Artists - 8 Mile Soundtrack - 01 - Lose Yourself.mp3` (compilation)
+- `Linkin Park/Collision Course/Linkin Park - Collision Course - 06 - Numb_Encore.mp3` (collaboration album)
 
 ## How It Works
 
@@ -65,12 +65,13 @@ Examples:
 
 ### 2. **Filename Parsing** (`parse_filename`)
 - Extracts metadata from filenames in multiple formats:
+  - `AlbumArtist - Album - TrackNumber - Song.mp3` format (e.g., `Coldplay - Parachutes - 05 - Yellow.mp3`)
   - `AlbumArtist - Album - Song.mp3` format
   - `AlbumArtist - Song.mp3` format (when album is not present)
   - `TrackNumber - Song.mp3` format (e.g., `01 - Yellow.mp3`)
 - Splits the filename on `" - "` (space-dash-space)
 - Returns a dictionary with `albumartist`, `album`, `title`, and/or `tracknumber` keys
-- The first part is treated as album artist to keep albums together when in 3-part format
+- The first part is treated as album artist to keep albums together when in 3/4-part format
 
 ### 3. **Audio Fingerprinting** (`query_acoustid`)
 - Analyzes the actual audio data to identify songs (most accurate method)
@@ -80,6 +81,7 @@ Examples:
 - Returns artist, album artist, title, album, track number, and confidence score
 - Album artist and track number are extracted from the album/release data in MusicBrainz
 - Requires `chromaprint` (fpcalc) to be installed
+- API key resolution: `--acoustid-key` CLI arg → `ACOUSTID_KEY` env var → shared public demo key (rate-limited; set your own for real workloads)
 
 ### 4. **Text-Based Metadata Lookup** (`query_itunes_api`)
 - Queries the iTunes Search API when metadata is missing or insufficient
@@ -128,9 +130,9 @@ This is the main processing function that:
 
 #### Step 5: Organize into Folder Structure
 - Creates directory structure: `Artist/Album/`
-- Generates new filename: `<Track Number> - <Track Name>.mp3`
+- Generates new filename: `<Artist> - <Album> - <Track Number> - <Track Name>.mp3`
 - Track numbers are zero-padded to 2 digits (01, 02, etc.)
-- If no track number available, uses just the track name
+- If no track number available, uses `<Artist> - <Album> - <Track Name>.mp3`
 - Moves file to the organized location
 - Uses "not found" to mark metadata that couldn't be identified
 
@@ -158,6 +160,9 @@ pip3 install --user mutagen requests pyacoustid
 
 # (Optional) set your Discogs token for --fetch-cover
 export DISCOGS_TOKEN="your-token-here"
+
+# (Optional) set your AcoustID key for fingerprinting at higher rate limits
+export ACOUSTID_KEY="your-key-here"
 ```
 
 ### Usage
@@ -203,6 +208,12 @@ python3 update-mp3-metadata.py ~/Music --inspect --csv
 ```bash
 # Use filename parsing + iTunes text lookup only
 python3 update-mp3-metadata.py ~/Music --skip-fingerprint
+```
+
+#### Use Your Own AcoustID Key
+```bash
+# Via CLI arg or ACOUSTID_KEY env var (demo key used otherwise)
+python3 update-mp3-metadata.py ~/Music --acoustid-key "your-key"
 ```
 
 #### Batch Mode
@@ -273,13 +284,13 @@ Each test file includes comprehensive documentation describing:
 /Music/
   Damien Rice/
     O/
-      01 - Blower's Daughter.mp3
-      02 - Cannonball.mp3
-      03 - Volcano.mp3
+      Damien Rice - O - 01 - Blower's Daughter.mp3
+      Damien Rice - O - 02 - Cannonball.mp3
+      Damien Rice - O - 03 - Volcano.mp3
       ...
 ```
 - Folder: `Damien Rice/O/`
-- Filename: `02 - Cannonball.mp3`
+- Filename: `Damien Rice - O - 02 - Cannonball.mp3`
 - ID3 tags: Artist = "Damien Rice", Album Artist = "Damien Rice", Album = "O", Title = "Cannonball", Track = "2"
 
 ## Limitations

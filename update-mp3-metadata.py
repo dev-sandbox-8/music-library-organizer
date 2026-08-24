@@ -201,6 +201,10 @@ MUSICBRAINZ_API = 'https://musicbrainz.org/ws/2'
 # Minimum seconds between MusicBrainz requests (their policy is 1 req/s).
 MUSICBRAINZ_MIN_INTERVAL = 1.0
 
+# AcoustID API key: ACOUSTID_KEY env var if set, else the shared public demo
+# key (rate-limited — set your own for real workloads).
+DEFAULT_ACOUSTID_KEY = os.environ.get('ACOUSTID_KEY', 'cSpUJKpD')
+
 # Matches canonical UUIDs used for MusicBrainz IDs.
 _MBID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
@@ -555,10 +559,16 @@ def rollback_changes(log_file):
     
     return error_count == 0
 
-def query_acoustid(mp3_path):
-    """Use audio fingerprinting to identify a song from its audio data."""
-    # AcoustID API key (public test key - replace with your own for production)
-    api_key = 'cSpUJKpD'
+def query_acoustid(mp3_path, api_key=None):
+    """Use audio fingerprinting to identify a song from its audio data.
+
+    Args:
+        mp3_path: Path to the audio file to fingerprint.
+        api_key: AcoustID API key. Falls back to DEFAULT_ACOUSTID_KEY
+            (ACOUSTID_KEY env var, then the public demo key).
+    """
+    if not api_key:
+        api_key = DEFAULT_ACOUSTID_KEY
 
     try:
         # Generate fingerprint and query AcoustID
@@ -688,7 +698,7 @@ def query_itunes_api(artist=None, title=None, album=None):
         return {'_error': str(e)}
 
 def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerprint=False,
-                              fetch_cover=False, discogs_token=None):
+                              fetch_cover=False, discogs_token=None, acoustid_key=None):
     try:
         audio = MP3(mp3_path, ID3=EasyID3)
     except Exception:
@@ -728,7 +738,7 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerpr
     
     if needs_lookup and not skip_fingerprint:
         print(f"Attempting audio fingerprint identification for {os.path.basename(mp3_path)}...")
-        acoustid_result = query_acoustid(mp3_path)
+        acoustid_result = query_acoustid(mp3_path, api_key=acoustid_key)
         
         if acoustid_result and '_error' not in acoustid_result:
             # Apply results from audio fingerprinting
@@ -845,9 +855,9 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerpr
             track_str = f"{track_num:02d}"
         except (ValueError, TypeError):
             track_str = str(tracknumber)
-        new_name = f"{track_str} - {title}.mp3"
+        new_name = f"{albumartist} - {album} - {track_str} - {title}.mp3"
     else:
-        new_name = f"{title}.mp3"
+        new_name = f"{albumartist} - {album} - {title}.mp3"
     
     # Create directory structure
     base_dir = os.path.dirname(mp3_path)
@@ -950,6 +960,10 @@ File Organization:
     parser.add_argument('--discogs-token', metavar='TOKEN',
                         help='Discogs personal-access token for --fetch-cover '
                              '(falls back to DISCOGS_TOKEN env var)')
+    parser.add_argument('--acoustid-key', metavar='KEY',
+                        help='AcoustID API key for audio fingerprinting '
+                             '(falls back to ACOUSTID_KEY env var, then the '
+                             'public demo key)')
 
 
     # If the script is run with no arguments, show help and exit.
@@ -991,6 +1005,7 @@ File Organization:
         print(f"Change log will be saved to: {log_file}")
 
     discogs_token = args.discogs_token or os.environ.get('DISCOGS_TOKEN')
+    acoustid_key = args.acoustid_key or os.environ.get('ACOUSTID_KEY')
 
     if args.dry_run:
         print("=" * 60)
@@ -1007,7 +1022,8 @@ File Organization:
         summary = run_batch(folder, dry_run=args.dry_run, logger=logger,
                             skip_fingerprint=args.skip_fingerprint,
                             fetch_cover=args.fetch_cover,
-                            discogs_token=discogs_token)
+                            discogs_token=discogs_token,
+                            acoustid_key=acoustid_key)
         error_count = summary['skipped']
     else:
         for index, mp3_file in enumerate(mp3_files, start=1):
@@ -1016,7 +1032,8 @@ File Organization:
             success = sync_metadata_and_rename(mp3_file, dry_run=args.dry_run, logger=logger,
                                                skip_fingerprint=args.skip_fingerprint,
                                                fetch_cover=args.fetch_cover,
-                                               discogs_token=discogs_token)
+                                               discogs_token=discogs_token,
+                                               acoustid_key=acoustid_key)
             if not success:
                 error_count += 1
 

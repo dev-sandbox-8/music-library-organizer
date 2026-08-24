@@ -7,7 +7,7 @@
 **Solution Implemented (Feb 2026):**
 The script now creates a hierarchical folder structure:
 ```
-<Artist>/<Album>/<Track Number> - <Track Name>.mp3
+<Artist>/<Album>/Artist - Album - <Track Number> - <Track Name>.mp3
 ```
 
 For compilation albums:
@@ -19,9 +19,9 @@ Example:
 ```
 Various Artists/
   Now That's What I Call Music! 50/
-    01 - Rolling in the Deep.mp3    (Adele)
-    02 - Just the Way You Are.mp3   (Bruno Mars)
-    03 - Firework.mp3                (Katy Perry)
+    Various Artists - Now That's What I Call Music! 50 - 01 - Rolling in the Deep.mp3    (Adele)
+    Various Artists - Now That's What I Call Music! 50 - 02 - Just the Way You Are.mp3   (Bruno Mars)
+    Various Artists - Now That's What I Call Music! 50 - 03 - Firework.mp3               (Katy Perry)
 ```
 
 **Benefits:**
