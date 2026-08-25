@@ -4,7 +4,6 @@ __pycache__/
 
 # Session / local artifacts
 STATUS.md
-agent-output/
 changes_*.json
 
 # Virtual environments
