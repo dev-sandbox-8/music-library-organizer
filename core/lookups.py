@@ -4,11 +4,14 @@ Extracted verbatim from update-mp3-metadata.py so both the CLI and the web
 app share one implementation. Includes the MusicBrainz artist lookup that
 AcoustID results are enriched with.
 """
+import logging
 import os
 import time
 
 import requests
 import acoustid
+
+logger = logging.getLogger(__name__)
 
 # MusicBrainz web-service base URL (ws/2, JSON responses).
 MUSICBRAINZ_API = 'https://musicbrainz.org/ws/2'
@@ -19,6 +22,12 @@ MUSICBRAINZ_MIN_INTERVAL = 1.0
 # AcoustID API key: ACOUSTID_KEY env var if set, else the shared public demo
 # key (rate-limited — set your own for real workloads).
 DEFAULT_ACOUSTID_KEY = os.environ.get('ACOUSTID_KEY', 'cSpUJKpD')
+
+if not os.environ.get('ACOUSTID_KEY'):
+    logger.warning(
+        'ACOUSTID_KEY env var is unset — falling back to the shared public '
+        'demo key, which is rate-limited and may be revoked. Set your own '
+        'key for production use.')
 
 
 def query_musicbrainz_artist(mbid):
@@ -105,7 +114,7 @@ def query_acoustid(mp3_path, api_key=None):
                                     if track.get('recording', {}).get('id') == recording_id:
                                         tracknumber = track.get('position')
                                         break
-                except:
+                except Exception:
                     pass
 
                 result = {
@@ -132,18 +141,19 @@ def query_acoustid(mp3_path, api_key=None):
                     if '_error' not in artist_info:
                         result['mb_artist_id'] = artist_info['mb_artist_id']
                         if artist_info.get('real_name'):
-                            print(f"  ℹ {artist_info['name']} performs as '{artist}', real name: {artist_info['real_name']}")
+                            logger.info("%s performs as '%s', real name: %s",
+                                        artist_info['name'], artist, artist_info['real_name'])
                             result['real_name'] = artist_info['real_name']
 
                 return result
     except acoustid.NoBackendError:
-        print(f"Error: chromaprint/fpcalc not found. Install with: brew install chromaprint")
+        logger.error("chromaprint/fpcalc not found. Install with: brew install chromaprint")
         return {'_error': 'No backend'}
     except acoustid.FingerprintGenerationError:
-        print(f"Warning: Could not generate fingerprint for {os.path.basename(mp3_path)}")
+        logger.warning("Could not generate fingerprint for %s", mp3_path)
         return {'_error': 'Fingerprint failed'}
     except Exception as e:
-        print(f"Warning: AcoustID lookup failed for {os.path.basename(mp3_path)}: {e}")
+        logger.warning("AcoustID lookup failed for %s: %s", mp3_path, e)
         return {'_error': str(e)}
 
     return {}
@@ -174,7 +184,8 @@ def query_itunes_api(artist=None, title=None, album=None):
     try:
         resp = requests.get(url, params=params, timeout=10)
         if resp.status_code != 200:
-            print(f"Warning: iTunes API returned status code {resp.status_code} for search: {params['term']}")
+            logger.warning("iTunes API returned status code %d for search: %s",
+                           resp.status_code, params['term'])
             return {'_error': f"HTTP {resp.status_code}"}
         data = resp.json()
         if data.get('results') and len(data['results']) > 0:
@@ -189,8 +200,9 @@ def query_itunes_api(artist=None, title=None, album=None):
                 'tracknumber': str(result.get('trackNumber')) if result.get('trackNumber') else None
             }
         else:
-            print(f"Warning: No results from iTunes API for search: {params['term']}")
+            logger.warning("No results from iTunes API for search: %s", params['term'])
             return {'_error': "No results"}
     except Exception as e:
-        print(f"Warning: iTunes API lookup failed for search '{params['term']}': {e}")
+        logger.warning("iTunes API lookup failed for search '%s': %s",
+                       params['term'], e)
         return {'_error': str(e)}

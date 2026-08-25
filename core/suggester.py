@@ -3,7 +3,6 @@
 Generates proposals only; nothing is written to files here. The CLI's
 'not found' stamping behavior intentionally does not exist in the web app.
 """
-from .library_db import LibraryDB  # noqa: F401  (re-exported for typing/tests)
 from .lookups import query_acoustid, query_itunes_api
 from .utils import parse_filename
 
@@ -75,6 +74,10 @@ def run_suggest_pass(db, progress_cb=None):
     files = [f for f in db.all_files() if not f.get('error')]
     stats = {'considered': 0, 'suggested': 0}
     for i, f in enumerate(files, start=1):
+        # A file already decided (approved/applied) keeps its verdict;
+        # re-running lookups would only duplicate the pending suggestion.
+        if db.has_non_pending_suggestion(f['id']):
+            continue
         stats['considered'] += 1
         fields, sources, confidence = generate_for_file(f['path'], f)
         if fields:

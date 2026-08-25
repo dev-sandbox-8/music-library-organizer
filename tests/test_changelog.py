@@ -24,11 +24,13 @@ class TestChangeLoggerDeleteEntries:
         logger = ChangeLogger(tmp_path / "changes.json")
         logger.log_delete("/music/dup.mp3", "/FakeTrash/dup.mp3")
 
-        assert logger.changes == [{
-            'operation': 'delete',
-            'original_path': '/music/dup.mp3',
-            'trash_destination': '/FakeTrash/dup.mp3',
-        }]
+        assert len(logger.changes) == 1
+        change = logger.changes[0]
+        # Delete entries carry the same shape as rename entries, incl. timestamp.
+        assert change['timestamp']
+        assert change['operation'] == 'delete'
+        assert change['original_path'] == '/music/dup.mp3'
+        assert change['trash_destination'] == '/FakeTrash/dup.mp3'
 
     def test_saved_log_is_valid_json_with_mixed_operations(self, tmp_path):
         log_file = tmp_path / "changes.json"

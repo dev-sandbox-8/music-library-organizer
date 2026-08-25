@@ -82,6 +82,7 @@ Examples:
 - Album artist and track number are extracted from the album/release data in MusicBrainz
 - Requires `chromaprint` (fpcalc) to be installed
 - API key resolution: `--acoustid-key` CLI arg → `ACOUSTID_KEY` env var → shared public demo key (rate-limited; set your own for real workloads)
+- **Production use requires your own key**: the built-in fallback is the public pyacoustid demo key — it is shared, rate-limited, and could be revoked at any time. A warning is logged at startup when it is in use. Get a free key at <https://acoustid.org/new-application> and set `ACOUSTID_KEY`.
 
 ### 4. **Text-Based Metadata Lookup** (`query_itunes_api`)
 - Queries the iTunes Search API when metadata is missing or insufficient

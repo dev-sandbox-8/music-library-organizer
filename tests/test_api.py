@@ -71,12 +71,16 @@ def test_scan_job_completes(tmp_path, monkeypatch):
     application = app_module.create_app(str(tmp_path / 'lib.db'))
     with TestClient(application) as tc:
         job_id = tc.post('/api/scan', json={'folder': str(folder)}).json()['job_id']
+        # Give the background thread a head start, then poll with a generous
+        # cap — CI runners can be slow to schedule the daemon thread.
+        time.sleep(0.5)
+        deadline = time.monotonic() + 30
         body = {'status': 'running'}
-        for _ in range(100):
+        while time.monotonic() < deadline:
             body = tc.get(f'/api/jobs/{job_id}').json()
             if body['status'] != 'running':
                 break
-            time.sleep(0.05)
+            time.sleep(0.1)
         assert body['status'] == 'done'
         assert body['result']['scan']['total'] == 1
     assert tc.get('/api/jobs/nope').status_code == 404

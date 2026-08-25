@@ -518,42 +518,33 @@ def sync_metadata_and_rename(mp3_path, dry_run=False, logger=None, skip_fingerpr
             print(f"  ✓ Identified with {int(confidence * 100)}% confidence")
             time.sleep(1)  # Be respectful with API rate
     
-    # If still missing after fingerprinting, try text-based iTunes lookup
-    for key in ['artist', 'albumartist', 'album', 'title', 'tracknumber']:
-        current_value = audio.get(key, [None])[0]
-        # Skip if field is present and not generic/invalid
-        if current_value and current_value not in ['Unknown', '-', '', ' ']:
-            continue
-            
-        # Get current metadata for search
-        search_artist = audio.get('artist', [None])[0]
-        search_title = audio.get('title', [None])[0]
-        search_album = audio.get('album', [None])[0]
-        
-        # Clean up invalid values for searching
-        if search_artist in ['Unknown', '-', '', ' ', None]:
-            search_artist = None
-        if search_title in ['Unknown', '-', '', ' ', None]:
-            search_title = None
-        if search_album in ['Unknown', '-', '', ' ', None]:
-            search_album = None
-        
-        # Skip API lookup if we don't have at least artist or title to search with
-        if not search_artist and not search_title:
-            print(f"Warning: Skipping online lookup for {os.path.basename(mp3_path)} - no artist or title to search")
-            break
-            
+    # If still missing after fingerprinting, do ONE text-based iTunes lookup
+    # for the whole track, then fill whatever fields it returned.
+    def _clean(value):
+        return None if value in (None, 'Unknown', '-', '', ' ') else value
+
+    search_artist = _clean(audio.get('artist', [None])[0])
+    search_title = _clean(audio.get('title', [None])[0])
+    search_album = _clean(audio.get('album', [None])[0])
+
+    if not search_artist and not search_title:
+        print(f"Warning: Skipping online lookup for {os.path.basename(mp3_path)} - no artist or title to search")
+    else:
         itunes_result = query_itunes_api(
             artist=search_artist,
             title=search_title,
-            album=search_album
+            album=search_album,
         )
         if '_error' in itunes_result:
-            # API failed but continue to mark remaining fields as "not found"
-            break
-        if key in itunes_result and itunes_result[key]:
-            audio[key] = itunes_result[key]
-            changed = True
+            print(f"Warning: iTunes lookup failed for {os.path.basename(mp3_path)}: {itunes_result['_error']}")
+        else:
+            for key in ['artist', 'albumartist', 'album', 'title', 'tracknumber']:
+                current_value = audio.get(key, [None])[0]
+                if key in itunes_result and itunes_result[key] and (
+                    not current_value or current_value in ['Unknown', '-', '', ' ']
+                ):
+                    audio[key] = itunes_result[key]
+                    changed = True
         time.sleep(0.5)  # Be respectful with API rate
     
     # Mark any remaining missing/invalid fields as "not found"

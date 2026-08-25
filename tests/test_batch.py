@@ -66,8 +66,8 @@ class TestRunBatch:
 
 class TestCliFlag:
     def test_flag_present_in_argparser(self):
-        import subprocess
+        import subprocess, sys
         result = subprocess.run(
-            ['python3', str(PROJECT_ROOT / 'update-mp3-metadata.py'), '--help'],
+            [sys.executable, str(PROJECT_ROOT / 'update-mp3-metadata.py'), '--help'],
             capture_output=True, text=True)
         assert '--batch' in result.stdout

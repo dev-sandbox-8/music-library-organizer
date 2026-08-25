@@ -36,6 +36,7 @@ class ChangeLogger:
     def log_delete(self, original_path, trash_destination):
         """Record a file being sent to the OS Trash (never permanent)."""
         change = {
+            'timestamp': datetime.now().isoformat(),
             'operation': 'delete',
             'original_path': original_path,
             'trash_destination': trash_destination,

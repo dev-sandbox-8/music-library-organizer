@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 SCHEMA = """
@@ -47,15 +48,18 @@ class LibraryDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute('PRAGMA foreign_keys = ON')
         self.conn.executescript(SCHEMA)
+        self.conn.execute('PRAGMA journal_mode=WAL')
         self.conn.commit()
+        self._lock = threading.Lock()
 
     def close(self):
         self.conn.close()
 
     def _execute(self, sql, params=()):
-        cur = self.conn.execute(sql, params)
-        self.conn.commit()
-        return cur
+        with self._lock:
+            cur = self.conn.execute(sql, params)
+            self.conn.commit()
+            return cur
 
     @staticmethod
     def _dict(row):
@@ -156,6 +160,12 @@ class LibraryDB:
             'INSERT INTO suggestions(file_id, fields_json, sources_json, confidence, '
             "status, created_at) VALUES(?,?,?,?, 'pending', ?)",
             (file_id, json.dumps(fields), json.dumps(sources), confidence, _now()))
+
+    def has_non_pending_suggestion(self, file_id):
+        return self.conn.execute(
+            "SELECT 1 FROM suggestions WHERE file_id=? "
+            "AND status IN ('approved','applied')",
+            (file_id,)).fetchone() is not None
 
     def list_suggestions(self, status=None):
         if status:

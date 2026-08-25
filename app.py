@@ -8,11 +8,21 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from core import safety, scanner, suggester
 from core.changelog import ChangeLogger
 from core.duplicates import find_duplicate_clusters
 from core.library_db import LibraryDB
+
+
+class SecurityHeaders(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        resp.headers['Content-Security-Policy'] = "default-src 'self'"
+        return resp
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(PROJECT_DIR, 'library.db')
@@ -46,6 +56,7 @@ class IdsRequest(BaseModel):
 
 def create_app(db_path: str) -> FastAPI:
     application = FastAPI(title='MP3 Library Manager')
+    application.add_middleware(SecurityHeaders)
     application.state.db = LibraryDB(db_path)
     application.state.project_dir = PROJECT_DIR
 
@@ -67,6 +78,10 @@ def create_app(db_path: str) -> FastAPI:
         except Exception as exc:  # surfaced through GET /api/jobs/{id}
             job['status'] = 'error'
             job['result'] = str(exc)
+        finally:
+            # Jobs are only needed while the UI polls them; drop them after
+            # a grace period so repeated scans don't grow JOBS unboundedly.
+            threading.Timer(300, lambda: JOBS.pop(job_id, None)).start()
 
     @application.post('/api/scan')
     def start_scan(req: ScanRequest):
@@ -122,6 +137,9 @@ def create_app(db_path: str) -> FastAPI:
 
     @application.get('/api/audio')
     def audio(path: str):
+        # Resolve symlinks/.. before the DB check so a swapped or crafted
+        # path cannot escape the indexed library.
+        path = os.path.realpath(path)
         row = application.state.db.get_file(path)
         if row is None or not os.path.exists(path):
             raise HTTPException(status_code=400, detail='path not in library index')

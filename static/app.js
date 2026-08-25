@@ -96,6 +96,13 @@ async function pollJob(jobId) {
 /* ---------- duplicates ---------- */
 let clusterState = {}; // key -> keeper path
 
+function formatDuration(seconds) {
+  const total = Math.round(Number(seconds) || 0);
+  const mins = Math.floor(total / 60);
+  const secs = String(total % 60).padStart(2, '0');
+  return `${mins}:${secs}`;
+}
+
 async function loadDuplicates() {
   const data = await api('/api/duplicates');
   const wrap = $('#clusters');
@@ -116,6 +123,9 @@ async function loadDuplicates() {
                    ${idx === 0 ? 'checked' : ''}></td>
         <td>${esc(m.artist || '?')} — ${esc(m.title || m.filename)}</td>
         <td class="path">${esc(m.path)}</td>
+        <td>${m.bitrate ? (m.bitrate / 1000).toFixed(0) + 'k' : '?'}</td>
+        <td>${m.size ? (m.size / 1024 / 1024).toFixed(1) + ' MB' : '?'}</td>
+        <td>${m.duration != null ? formatDuration(m.duration) : '?'}</td>
         <td><audio controls preload="none"
                    src="/api/audio?path=${encodeURIComponent(m.path)}"></audio></td>
       </tr>`).join('');

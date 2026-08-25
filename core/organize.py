@@ -1,5 +1,7 @@
 """Compute the organized destination path and perform safe moves."""
+import errno
 import os
+import shutil
 
 from .utils import sanitize_filename
 
@@ -45,5 +47,12 @@ def compute_target_path(mp3_path, tags):
 def move_file(src, dst):
     """Create dst's parent dirs and move src there. Returns dst."""
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    os.rename(src, dst)
+    try:
+        os.rename(src, dst)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        # src and dst on different filesystems (USB drive, network share):
+        # shutil.move copies + unlinks instead of failing.
+        shutil.move(src, dst)
     return dst
