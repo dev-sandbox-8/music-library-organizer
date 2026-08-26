@@ -21,9 +21,19 @@ def fake_read_tags(path):
     return DEFAULT_TAGS
 
 
+FAKE_AUDIO_INFO = (123.0, 320000)
+
+
 @pytest.fixture(autouse=True)
 def patch_read_tags(monkeypatch):
     monkeypatch.setattr(scanner, 'read_tags', fake_read_tags)
+    monkeypatch.setattr(scanner, 'read_audio_info',
+                        lambda p: FAKE_AUDIO_INFO)
+
+
+def _make_tree(tmp_path, names=('a.mp3', 'b.mp3')):
+    for n in names:
+        (tmp_path / n).write_bytes(b'ID3DATA' + n.encode())
 
 
 def _make_tree(tmp_path, names=('a.mp3', 'b.mp3')):
@@ -94,3 +104,25 @@ def test_progress_callback_reports_totals(tmp_path, db):
                         progress_cb=lambda d, t, phase: seen.append((d, t, phase)))
     assert seen[-1][0] == seen[-1][1] == 2
     assert {phase for _, _, phase in seen} == {'scan'}
+
+
+def test_scan_records_duration_and_bitrate(tmp_path, db):
+    _make_tree(tmp_path)
+    scanner.scan_folder(db, str(tmp_path))
+    for f in db.all_files():
+        assert f['duration'] == FAKE_AUDIO_INFO[0]
+        assert f['bitrate'] == FAKE_AUDIO_INFO[1]
+
+
+def test_scan_refreshes_rows_missing_duration_or_bitrate(tmp_path, db):
+    # Simulate a legacy row written before duration/bitrate were captured.
+    _make_tree(tmp_path, names=('a.mp3',))
+    db.upsert_file({'path': str(tmp_path / 'a.mp3'), 'filename': 'a.mp3',
+                    'size': (tmp_path / 'a.mp3').stat().st_size,
+                    'mtime': (tmp_path / 'a.mp3').stat().st_mtime,
+                    'duration': None, 'bitrate': None, **DEFAULT_TAGS})
+    stats = scanner.scan_folder(db, str(tmp_path))
+    assert stats['updated'] == 1 and stats['unchanged'] == 0
+    row = db.get_file(str(tmp_path / 'a.mp3'))
+    assert row['duration'] == FAKE_AUDIO_INFO[0]
+    assert row['bitrate'] == FAKE_AUDIO_INFO[1]

@@ -131,7 +131,11 @@ async function loadDuplicates() {
       </tr>`).join('');
     box.innerHTML = `
       <strong>Cluster ${esc(cluster.key)}</strong>
-      <table><tbody>${rows}</tbody></table>
+      <table>
+        <thead><tr><th></th><th>Track</th><th>Path</th><th>Bitrate</th>
+          <th>Size</th><th>Length</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
       <button class="danger delete-rest">Delete others (→ Trash)</button>
       <button class="keep-all">Keep all / dismiss</button>`;
     box.querySelector('.delete-rest').addEventListener('click', () => deleteOthers(box, cluster));
