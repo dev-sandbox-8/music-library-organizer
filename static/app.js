@@ -152,8 +152,22 @@ async function deleteOthers(box, cluster) {
     .map((m) => m.path);
   if (!doomed.length) return;
   if (!confirm(`Move ${doomed.length} file(s) to Trash?\n\n${doomed.join('\n')}`)) return;
-  await api('/api/trash', { method: 'POST', body: { paths: doomed } });
-  loadDuplicates();
+  const res = await api('/api/trash', { method: 'POST', body: { paths: doomed } });
+  renderTrashDetails(res.results);
+  await loadDuplicates();
+}
+
+function renderTrashDetails(results) {
+  const el = $('#trash-details');
+  if (!results || !results.length) { el.hidden = true; return; }
+  const failed = results.filter((r) => !r.ok);
+  const ok = results.length - failed.length;
+  const lines = [`${ok} moved to Trash`];
+  for (const r of failed)
+    lines.push(`✗ ${r.path}\n   ${r.error}`);
+  el.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join('');
+  el.classList.toggle('has-errors', failed.length > 0);
+  el.hidden = false;
 }
 
 async function dismissCluster(cluster) {
@@ -247,8 +261,25 @@ $('#apply-btn').addEventListener('click', async () => {
   const summary = await api('/api/apply', { method: 'POST' });
   $('#apply-summary').textContent =
     `${summary.applied.length} applied · ${summary.conflicts.length} conflicts · ${summary.errors.length} errors`;
+  renderApplyDetails(summary);
   loadSuggestions();
 });
+
+function renderApplyDetails(summary) {
+  const el = $('#apply-details');
+  const lines = [];
+  for (const a of summary.applied)
+    lines.push(`✓ ${a.new_path}`);
+  for (const c of summary.conflicts)
+    lines.push(`⚠ conflict: ${c.file}\n   target ${c.target} already exists`);
+  for (const e of summary.errors)
+    lines.push(`✗ ${e.file}\n   ${e.error}`);
+  if (!lines.length) { el.hidden = true; return; }
+  const hasErrors = summary.conflicts.length > 0 || summary.errors.length > 0;
+  el.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join('');
+  el.classList.toggle('has-errors', hasErrors);
+  el.hidden = false;
+}
 
 /* ---------- init ---------- */
 loadLibrary();
