@@ -156,8 +156,12 @@ The script includes a `compute_checksum()` function that uses SHA256 hashing to 
 # Install chromaprint (required for audio fingerprinting)
 brew install chromaprint
 
+# Create and activate a virtual environment (run from the repo root)
+python3 -m venv venv
+source venv/bin/activate
+
 # Install Python dependencies
-pip3 install --user mutagen requests pyacoustid
+pip install -r requirements.txt
 
 # (Optional) set your Discogs token for --fetch-cover
 export DISCOGS_TOKEN="your-token-here"
